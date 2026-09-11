@@ -425,6 +425,8 @@ def compute_claims(
         needs_review = confidence < cfg.review_threshold
         if needs_review:
             review.append(claim.id)
+            claim.status = "低置信"
+            reasons.append("置信度低于自动计分阈值，等待人工复核，不计入总分")
 
         matches.append(
             RuleMatch(
@@ -436,6 +438,7 @@ def compute_claims(
                 team_factor=factor,
                 capped=capped,
                 dedup_group=rule.constraints.dedup_group,
+                counted=not needs_review,
                 channel="structured",
                 confidence=confidence,
                 needs_review=needs_review,

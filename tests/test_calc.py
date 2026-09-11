@@ -327,12 +327,19 @@ class TestComputeClaims:
         assert "第三章第7条" in m.source.short()
 
     def test_review_flag_on_low_confidence(self, base_ruleset: Ruleset) -> None:
+        claim = make_claim("参加了比赛", level=None, claim_id="c1")
         bd = compute_claims(
-            [make_claim("参加了比赛", level=None, claim_id="c1")],
+            [claim],
             base_ruleset, academic_year="2025-2026",
         )
         assert bd.review_claims
-        assert any(m.needs_review for m in bd.matches)
+        match = bd.matches[0]
+        assert match.needs_review
+        assert not match.counted
+        assert match.score > 0  # 保留候选分值供复核，但禁止进入总分
+        assert bd.total == 0
+        assert claim.status == "低置信"
+        assert "不计入总分" in (match.reason or "")
 
     def test_empty_claims(self, base_ruleset: Ruleset) -> None:
         bd = compute_claims([], base_ruleset, academic_year="2025-2026")

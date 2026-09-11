@@ -349,7 +349,10 @@ class RuleMatch(BaseModel):
     claim_id: str
     rule_id: str | None
     matched_key: str | None = Field(default=None, description="命中的键（正式等级或同义词）")
-    score: float = Field(default=0.0, description="计入分值（已折算/封顶，未去重）")
+    score: float = Field(
+        default=0.0,
+        description="候选分值（已折算/封顶，未去重；是否计入由 counted 决定）",
+    )
     raw_score: float = Field(default=0.0, description="规则分值（未折算）")
     team_factor: float = 1.0
     capped: bool = Field(default=False, description="是否被本规则 cap 截断")
