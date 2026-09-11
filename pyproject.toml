@@ -89,4 +89,7 @@ python_version = "3.11"
 packages = ["scoreproof"]
 mypy_path = "src"
 ignore_missing_imports = true
+# 只检查本项目源码；当前环境的新版 NumPy 存根包含旧版 mypy 无法解析的
+# Python 3.12 ``type`` 语句，深入第三方实现会在进入项目代码前中止。
+follow_imports = "skip"
 warn_unused_ignores = true

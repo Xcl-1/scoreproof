@@ -243,7 +243,7 @@ class Ruleset(BaseModel):
     def __len__(self) -> int:
         return len(self.rules)
 
-    def __iter__(self) -> Iterable[Rule]:  # type: ignore[override]
+    def __iter__(self) -> Iterable[Rule]:
         return iter(self.rules)
 
 

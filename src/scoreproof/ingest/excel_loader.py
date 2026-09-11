@@ -53,7 +53,7 @@ def find_overlapping_merges(
     但从其他工具/手工拼出来的表可能带着重叠范围），填充结果会互相覆盖，
     导致整列类别错位 —— 必须显式告警而不是静默算错。
     """
-    ranges = [tuple(r) for r in merged_ranges]
+    ranges = list(merged_ranges)
     clashes: list[tuple[tuple[int, int, int, int], tuple[int, int, int, int]]] = []
     for i, a in enumerate(ranges):
         for b in ranges[i + 1 :]:
@@ -85,7 +85,7 @@ def fill_merged_cells(
         污染到整行（表头行尤其致命），这是 Excel 解析最常见的翻车来源。
         普通空单元格（未合并）一律保持为空，由上层决定怎么处理。
     """
-    ranges = [tuple(r) for r in merged_ranges]
+    ranges = list(merged_ranges)
     clashes = find_overlapping_merges(ranges)
     if clashes:
         raise DataSourceError(

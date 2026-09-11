@@ -134,6 +134,7 @@ scoreproof/
 |---|---|
 | `scoreproof doctor` | 环境自检（依赖/配置/规则库） |
 | `scoreproof parse-pdf 细则.pdf --tables` | 抽 PDF 文本与表格，标记疑似扫描页 |
+| `scoreproof parse-image 奖状.png --ocr` | 检查图片质量、计算 pHash 并运行 RapidOCR |
 | `scoreproof parse-claims 综测表.xlsx` | 解析申报条目（含合并单元格 fill-down） |
 | `scoreproof import-rules 规则表.xlsx -y 2025-2026` | 规则入库（建议人工校对一遍） |
 | `scoreproof list-rules -y 2025-2026` | 查看规则库 |
@@ -156,7 +157,7 @@ scoreproof/
 |---|---|---|
 | P0 | 定位、架构、schema、指标设计 | ✅ 已完成（规划） |
 | **P1** | Excel 解析 + 文本 PDF 细则 → 规则库 + 计算引擎 + 往年回测 | ✅ **本仓库骨架已完成** |
-| P2 | 奖状图片 → OCR → 字段抽取 → 校对界面 + pHash 查重 + 一致性核对 | ⏳ 待做（`extras: multimodal`、`ingest/image_loader.py`） |
+| P2 | 奖状图片 → OCR → 字段抽取 → 校对界面 + pHash 查重 + 一致性核对 | 🟡 图片质量检查、预处理、RapidOCR、pHash 已完成；LLM/VLM 与校对界面待做 |
 | P3 | FastAPI + SSE + 引用面板 + 前端 | 🟡 后端接口已就绪，前端待做 |
 | P4 | Word/扫描件、向量检索 + 重排、增量索引、权限、RAGAS 闭环 | ⏳ 待做（`retrieval.VectorChannel` 已留接口） |
 

@@ -17,6 +17,7 @@ from .calc.engine import EngineConfig, compute_all
 from .config import get_settings
 from .eval.backtest import load_ground_truth, run_backtest
 from .ingest.excel_loader import load_claims, load_rules
+from .ingest.image_loader import check_quality, phash, preprocess, run_ocr
 from .ingest.pdf_loader import load_pdf
 from .retrieval.router import Router, clauses_from_pdf_pages
 from .rules.store import RuleStore
@@ -161,6 +162,51 @@ def parse_claims(
             json.dumps([c.model_dump(mode="json") for c in claims], ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
+        console.print(f"已写出：{out}")
+
+
+@app.command("parse-image")
+def parse_image(
+    image: Path = typer.Argument(..., exists=True, dir_okay=False, help="奖状/证书图片"),
+    run_preprocess: bool = typer.Option(False, "--preprocess/--raw", help="OCR 前是否预处理"),
+    with_ocr: bool = typer.Option(True, "--ocr/--no-ocr", help="是否运行 RapidOCR"),
+    processed_dir: Path | None = typer.Option(None, "--processed-dir", help="预处理图片输出目录"),
+    out: Path | None = typer.Option(None, "--out", help="导出 JSON"),
+) -> None:
+    """检查图片质量、计算 pHash，并可执行本地 OCR。"""
+    quality = check_quality(image)
+    target = preprocess(image, out_dir=processed_dir) if run_preprocess else image
+    ocr_result = run_ocr(target) if with_ocr else None
+    payload = {
+        "source": str(image),
+        "processed": str(target) if run_preprocess else None,
+        "quality": {
+            "width": quality.width,
+            "height": quality.height,
+            "sharpness": quality.sharpness,
+            "is_blurry": quality.is_blurry,
+            "needs_retake": quality.needs_retake,
+            "rotation_applied": quality.rotation_applied,
+            "notes": quality.notes,
+        },
+        "phash": phash(image),
+        "ocr": None
+        if ocr_result is None
+        else {
+            "engine": ocr_result.engine,
+            "elapsed_seconds": ocr_result.elapsed_seconds,
+            "mean_confidence": ocr_result.mean_confidence,
+            "text": ocr_result.text,
+            "lines": [
+                {"text": line.text, "bbox": line.bbox, "confidence": line.confidence}
+                for line in ocr_result.lines
+            ],
+        },
+    }
+    console.print_json(json.dumps(payload, ensure_ascii=False))
+    if out:
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
         console.print(f"已写出：{out}")
 
 

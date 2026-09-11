@@ -13,10 +13,10 @@ from typing import Any
 from ..errors import DataSourceError
 
 try:  # pragma: no cover - 取决于环境
-    import pymupdf  # type: ignore
+    import pymupdf
 except ImportError:  # pragma: no cover
     try:
-        import fitz as pymupdf  # type: ignore
+        import fitz as pymupdf
     except ImportError:
         pymupdf = None
 
@@ -124,7 +124,7 @@ def load_pdf_tables(
     if not p.exists():
         raise DataSourceError(f"PDF 文件不存在：{p}", detail={"path": str(p)})
     try:
-        import pdfplumber  # type: ignore
+        import pdfplumber
     except ImportError as exc:  # pragma: no cover
         raise DataSourceError(
             "抽表格需要 pdfplumber",

@@ -17,13 +17,29 @@ from .excel_loader import (
     normalize_header,
     read_excel,
 )
+from .image_loader import (
+    CERTIFICATE_FIELDS,
+    ImageQuality,
+    OcrLine,
+    OcrResult,
+    check_quality,
+    phash,
+    phash_distance,
+    preprocess,
+    run_ocr,
+)
 from .pdf_loader import PDFPage, load_pdf, load_pdf_tables
 
 __all__ = [
     "DocxBlock",
+    "CERTIFICATE_FIELDS",
     "ExcelGrid",
+    "ImageQuality",
+    "OcrLine",
+    "OcrResult",
     "PDFPage",
     "fill_merged_cells",
+    "check_quality",
     "load_claims",
     "load_docx",
     "load_pdf",
@@ -32,5 +48,9 @@ __all__ = [
     "load_sheet",
     "load_workbook_grid",
     "normalize_header",
+    "phash",
+    "phash_distance",
+    "preprocess",
     "read_excel",
+    "run_ocr",
 ]

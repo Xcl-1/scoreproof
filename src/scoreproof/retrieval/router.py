@@ -191,7 +191,7 @@ class LexicalRetriever:
     def _build(self) -> None:
         if self._bm25 is not None:
             return
-        from rank_bm25 import BM25Okapi  # type: ignore
+        from rank_bm25 import BM25Okapi
 
         self._corpus_tokens = [self._tokenize(c.text) for c in self.clauses]
         self._bm25 = BM25Okapi(self._corpus_tokens)

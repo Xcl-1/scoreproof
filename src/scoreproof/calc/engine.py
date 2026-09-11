@@ -472,7 +472,9 @@ def compute_claims(
     else:
         winners = {}
         for group, bucket in by_group.items():
-            winners[group] = dedup_take_max(bucket)  # 占位，下面按组求和
+            winner = dedup_take_max(bucket)  # 占位，下面按组求和
+            if winner is not None:
+                winners[group] = winner
 
     # ---- 互斥组裁决 ----
     if cfg.same_group_take_max:
@@ -559,7 +561,7 @@ def compute_all(
     bucket: dict[str, list[Claim]] = {}
     for c in claims:
         bucket.setdefault(c.student_id, []).append(c)
-    year = academic_year or next((c.academic_year for c in claims if c.academic_year), None)  # type: ignore[union-attr]
+    year = academic_year or next((c.academic_year for c in claims if c.academic_year), None)
     idx = RuleIndex(ruleset, academic_year=year, college=college)
     return {
         sid: compute_claims(items, ruleset, academic_year=year, college=college, config=cfg, index=idx)

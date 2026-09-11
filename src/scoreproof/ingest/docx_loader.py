@@ -83,9 +83,9 @@ def load_docx(path: str | Path) -> DocxDocument:
     if not p.exists():
         raise DataSourceError(f"Word 文件不存在：{p}", detail={"path": str(p)})
     try:
-        import docx  # type: ignore
-        from docx.table import Table  # type: ignore
-        from docx.text.paragraph import Paragraph  # type: ignore
+        import docx
+        from docx.table import Table
+        from docx.text.paragraph import Paragraph
     except ImportError as exc:  # pragma: no cover
         raise DataSourceError(
             "需要 python-docx 才能读取 .docx",
