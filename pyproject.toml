@@ -1,0 +1,92 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "scoreproof"
+version = "0.1.0"
+description = "综测加分智能核算系统：异构文档 -> 结构化规则库 -> 确定性计算，每条分值可回溯原文出处"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "scoreproof" }]
+keywords = ["rag", "rules-engine", "ocr", "pdf", "excel", "fastapi"]
+classifiers = [
+    "Programming Language :: Python :: 3.12",
+    "Private :: Do Not Upload",
+]
+
+# 核心依赖：只装 P1（Excel/PDF 解析 + 计算引擎 + API）真正需要的
+dependencies = [
+    "pydantic>=2.7",
+    "pandas>=2.2",
+    "openpyxl>=3.1",
+    "pymupdf>=1.24",
+    "python-docx>=1.1",
+    "typer>=0.12",
+    "rich>=13.7",
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "python-multipart>=0.0.9",
+]
+
+[project.optional-dependencies]
+# 细则表格抽取（"等级×类别 加分矩阵"）
+tables = [
+    "pdfplumber>=0.11",
+]
+# P2 多模态（OCR / 图片预处理 / 查重）
+multimodal = [
+    "rapidocr-onnxruntime>=1.3",
+    "pillow>=10.3",
+    "opencv-python-headless>=4.10",
+    "imagehash>=4.3",
+]
+# 兜底检索通道（不装也能跑，router 会自动降级为"结构化单通道"）
+retrieval = [
+    "rank-bm25>=0.2.2",
+    "chromadb>=0.5",
+]
+# LLM 抽取（规则结构化 / 字段抽取）
+llm = [
+    "openai>=1.40",
+]
+dev = [
+    "pytest>=8.2",
+    "pytest-cov>=5.0",
+    "ruff>=0.6",
+    "mypy>=1.11",
+]
+
+[project.scripts]
+scoreproof = "scoreproof.cli:app"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/scoreproof"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q --strict-markers -p no:cacheprovider"
+filterwarnings = ["ignore::DeprecationWarning"]
+
+[tool.ruff]
+line-length = 110
+target-version = "py311"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+ignore = ["E501"]
+
+[tool.ruff.lint.per-file-ignores]
+# typer 的命令行声明必须在默认值里调用 Option()/Argument()，B008 在此是误报
+"src/scoreproof/cli.py" = ["B008"]
+# FastAPI 的依赖注入同样要求 File()/Depends() 出现在默认值里
+"src/scoreproof/api/app.py" = ["B008"]
+
+[tool.mypy]
+python_version = "3.11"
+packages = ["scoreproof"]
+mypy_path = "src"
+ignore_missing_imports = true
+warn_unused_ignores = true

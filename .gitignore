@@ -1,0 +1,53 @@
+# ---- 隐私红线：原始材料与真实数据绝不入库 ----
+data/raw/
+data/rules/
+data/eval/
+data/processed/
+# 合成演示数据由 scripts/make_sample_data.py 生成，不必提交
+data/sample/
+data/tmp/
+!data/raw/.gitkeep
+!data/rules/.gitkeep
+!data/eval/.gitkeep
+*.xlsx
+*.xls
+*.pdf
+*.docx
+*.jpg
+*.jpeg
+*.png
+!tests/fixtures/**/*.xlsx
+
+# ---- secrets ----
+.env
+.env.*
+!.env.example
+
+# ---- python ----
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.uv-cache/
+.tmp/
+.coverage
+htmlcov/
+
+# ---- db / index ----
+*.sqlite
+*.sqlite3
+*.db
+chroma/
+qdrant/
+
+# ---- editors / os ----
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
