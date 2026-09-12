@@ -44,7 +44,19 @@
     "missing_key_fails_explicitly": true,
     "five_gate_validation_executed": true,
     "production_database_modified": false,
-    "status": "passed_with_cli_configuration_gap"
+    "status": "passed"
   },
-  "remaining_gap": "The CLI does not yet expose document-specific allowed_levels, so this public intellectual-property rule batch is blocked under the default context."
+  "follow_up": {
+    "document_allowed_levels_cli_option": "--allowed-level",
+    "status": "resolved",
+    "unit_test": "repeatable option forwards the allowlist into GatewayContext",
+    "real_cli_retest": {
+      "executed_at": "2026-09-12T12:50:53+08:00",
+      "api_calls": 2,
+      "accepted": 4,
+      "review": 0,
+      "isolated_database_rules_published": 4,
+      "exit_code": 0
+    }
+  }
 }

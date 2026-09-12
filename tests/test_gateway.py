@@ -8,7 +8,9 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from typer.testing import CliRunner
 
+from scoreproof.cli import app
 from scoreproof.errors import SchemaValidationError, VersionConflict
 from scoreproof.eval.gateway import GatewayNegativeCase, evaluate_gateway_negatives, wilson_interval
 from scoreproof.rules.extractor import LLMExtractor
@@ -399,6 +401,52 @@ class FakeClient:
 
 
 class TestLLMExtractor:
+    def test_cli_accepts_repeatable_document_allowed_levels(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        source = tmp_path / "rules.txt"
+        source.write_text("第一专利人加5分", encoding="utf-8")
+        captured: dict = {}
+
+        class StubExtractor:
+            model = "mock-model"
+
+            def __init__(self, *, cache) -> None:
+                captured["cache"] = cache
+
+            def extract_validated(self, text, *, context, **kwargs):
+                captured["context"] = context
+                return ExtractionGateway().validate_batch(
+                    [
+                        payload(
+                            category="知识产权",
+                            level="第一专利人",
+                            score=5.0,
+                            evidence_quote=text,
+                        )
+                    ],
+                    source_text=text,
+                    context=context,
+                )
+
+        monkeypatch.setattr("scoreproof.cli.LLMExtractor", StubExtractor)
+        result = CliRunner().invoke(
+            app,
+            [
+                "extract-rules-llm",
+                str(source),
+                "--year",
+                "2025-2026",
+                "--allowed-level",
+                "第一专利人",
+                "--db",
+                str(tmp_path / "rules.sqlite"),
+            ],
+        )
+
+        assert result.exit_code == 0, result.output
+        assert captured["context"].allowed_levels == frozenset({"第一专利人"})
+
     def test_real_adapter_parses_fenced_json_and_uses_cache(self, tmp_path: Path) -> None:
         raw = "```json\n" + json.dumps({"rules": [payload()]}, ensure_ascii=False) + "\n```"
         client = FakeClient([raw])

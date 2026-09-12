@@ -17,6 +17,7 @@ from .calc.engine import EngineConfig, compute_all
 from .config import get_settings
 from .eval.backtest import load_ground_truth, run_backtest
 from .eval.gateway import GatewayNegativeCase, evaluate_gateway_negatives
+from .indexing import DocumentChunk, IndexManifestStore
 from .ingest.excel_loader import load_claims, load_rules
 from .ingest.image_loader import check_quality, phash, preprocess, run_ocr
 from .ingest.pdf_loader import load_pdf
@@ -24,7 +25,7 @@ from .retrieval.router import Router, clauses_from_pdf_pages
 from .rules.extractor import LLMExtractor
 from .rules.gateway import GatewayContext
 from .rules.store import RuleStore
-from .schema import Claim, Ruleset
+from .schema import Claim, Ruleset, SourceRef
 
 app = typer.Typer(
     help="综测加分核算系统：Excel/PDF 解析 -> 规则库 -> 确定性核算 -> 回测",
@@ -139,6 +140,80 @@ def parse_pdf(
         first = next((p for p in pages if p.char_count), None)
         if first:
             console.print(first.text[:800])
+
+
+@app.command("sync-pdf-manifest")
+def sync_pdf_manifest(
+    pdf: Path = typer.Argument(..., exists=True, dir_okay=False, help="待同步的规则 PDF"),
+    doc_id: str | None = typer.Option(None, "--doc-id", help="稳定文档 ID；默认使用文件名"),
+    embedding_model: str = typer.Option(
+        "unembedded-v1",
+        "--embedding-model",
+        help="索引模型版本；阶段 4.2 接入向量前使用 unembedded-v1",
+    ),
+    db: Path | None = typer.Option(None, "--db", help="manifest 所在 SQLite"),
+) -> None:
+    """按页生成逻辑块，计算双级 Hash，并原子发布增量 manifest。"""
+    settings = get_settings()
+    pages = load_pdf(pdf)
+    scanned_pages = [page.page for page in pages if not page.text.strip()]
+    if scanned_pages:
+        console.print(
+            f"[yellow]以下页面没有可索引文本，必须先 OCR，未发布 manifest：{scanned_pages}[/yellow]"
+        )
+        raise typer.Exit(code=2)
+    chunks = [
+        DocumentChunk(
+            logical_key=f"page:{page.page}",
+            text=page.text,
+            kind="page",
+            source=SourceRef(doc=pdf.name, page=page.page, text=page.text[:200]),
+            metadata={
+                "block_count": len(page.blocks),
+                "is_probably_scanned": page.is_probably_scanned,
+            },
+        )
+        for page in pages
+    ]
+    if not chunks:
+        console.print("[yellow]PDF 没有可索引文本；疑似扫描件需先 OCR[/yellow]")
+        raise typer.Exit(code=2)
+    with IndexManifestStore(db or settings.db_path) as store:
+        result = store.sync_document(
+            doc_id=doc_id or pdf.name,
+            source_path=pdf,
+            document_bytes=pdf.read_bytes(),
+            chunks=chunks,
+            embedding_model=embedding_model,
+        )
+    payload = result.model_dump(mode="json")
+    payload["rebuild_keys"] = result.diff.rebuild_keys
+    console.print_json(json.dumps(payload, ensure_ascii=False))
+
+
+@app.command("rollback-index-manifest")
+def rollback_index_manifest(
+    doc_id: str = typer.Argument(..., help="稳定文档 ID"),
+    manifest_id: str | None = typer.Option(None, "--manifest-id", help="默认回滚到上一版本"),
+    db: Path | None = typer.Option(None, "--db"),
+) -> None:
+    """把活动索引原子切回指定或上一份完整 manifest。"""
+    settings = get_settings()
+    with IndexManifestStore(db or settings.db_path) as store:
+        result = store.rollback(doc_id, manifest_id=manifest_id)
+    console.print_json(result.model_dump_json())
+
+
+@app.command("delete-index-document")
+def delete_index_document(
+    doc_id: str = typer.Argument(..., help="稳定文档 ID"),
+    db: Path | None = typer.Option(None, "--db"),
+) -> None:
+    """从活动索引删除文档，同时保留可审计历史快照。"""
+    settings = get_settings()
+    with IndexManifestStore(db or settings.db_path) as store:
+        result = store.delete_document(doc_id)
+    console.print_json(result.model_dump_json())
 
 
 @app.command("parse-claims")
@@ -339,6 +414,11 @@ def extract_rules_llm(
     academic_year: str = typer.Option(..., "--year", "-y", help="规则适用学年"),
     college: str | None = typer.Option(None, "--college"),
     page: int | None = typer.Option(None, "--page", min=1),
+    allowed_level: list[str] | None = typer.Option(
+        None,
+        "--allowed-level",
+        help="本文档允许的自定义等级/身份，可重复传入",
+    ),
     double_check: bool = typer.Option(
         False, "--double-check", help="使用第二种提示独立抽取并交叉验证"
     ),
@@ -356,6 +436,7 @@ def extract_rules_llm(
         college=college,
         doc=source.name,
         page=page,
+        allowed_levels=frozenset(allowed_level or []),
     )
     with RuleStore(db or settings.db_path) as store:
         extractor = LLMExtractor(cache=store)

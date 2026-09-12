@@ -1,0 +1,37 @@
+{
+  "report_version": "index-manifest-smoke-v1",
+  "executed_at": "2026-09-12T12:54:53+08:00",
+  "source": {
+    "document": "fzu_ccds_2026_recommendation_score_rules.pdf",
+    "document_sha256": "1C1FC3C899017E641F7A92430DD342634C4F50DF5D67EBAB6F5547E3D4B840C5",
+    "doc_id": "fzu-ccds-2026",
+    "pages": 6,
+    "contains_personal_data": false
+  },
+  "configuration": {
+    "embedding_model": "unembedded-v1",
+    "database": "isolated temporary SQLite"
+  },
+  "first_sync": {
+    "action": "published",
+    "added_chunks": 6,
+    "rebuild_chunks": 6,
+    "active_chunks": 6
+  },
+  "second_sync": {
+    "action": "unchanged",
+    "manifest_reused": true,
+    "unchanged_chunks": 6,
+    "rebuild_chunks": 0
+  },
+  "automated_coverage": {
+    "single_chunk_change_only_rebuilds_changed_chunk": true,
+    "removed_chunk_disappears_from_active_snapshot": true,
+    "embedding_model_change_rebuilds_all_chunks": true,
+    "rollback_restores_previous_snapshot": true,
+    "pre_publish_failure_leaves_no_half_snapshot": true
+  },
+  "production_database_modified": false,
+  "status": "passed_manifest_core",
+  "remaining_gap": "BM25 and vector backends are not connected yet; cross-backend atomic publication belongs to work package 4.2."
+}

@@ -131,12 +131,15 @@ class TestExtractor:
         rules = drafts_to_rules(drafts, academic_year="2025-2026", doc="细则.pdf")
         assert len(rules) == 1 and rules[0].score == 8
 
-    def test_llm_extractor_unavailable_without_key(self) -> None:
+    def test_llm_extractor_unavailable_without_key(self, monkeypatch) -> None:
+        from scoreproof.config import Settings
         from scoreproof.rules.extractor import LLMExtractor
 
+        monkeypatch.setattr(
+            "scoreproof.rules.extractor.get_settings",
+            lambda: Settings(llm_api_key=None),
+        )
         extractor = LLMExtractor()
-        if extractor.available():  # pragma: no cover - 本地配了 Key 的情况
-            pytest.skip("本地已配置 LLM Key")
         from scoreproof.errors import DataSourceError
 
         with pytest.raises(DataSourceError):
