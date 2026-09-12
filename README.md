@@ -44,13 +44,14 @@ uv run scoreproof serve --port 8000
 │ excel_loader  openpyxl/pandas → 综测表 + 规则表     │
 │ pdf_loader    pymupdf / pdfplumber → 细则文本+表格  │
 │ docx_loader   python-docx → 正文 + 表格（保序）     │
-│ image_loader  预处理 + OCR（P2：RapidOCR）          │
+│ image_loader  预处理 + OCR（RapidOCR）               │
 └──────────────────┬─────────────────────────────────┘
                    ↓
 ┌─ 结构化层（一次性，人工校对）──────────────────────┐
-│ extractor  LLM/程序抽取 → 统一 schema（带 source）  │
-│ normalize  归一化：省部级→省级、第二名→二等奖       │
-│ verify     一致性核对 + pHash 查重（P2）            │
+│ extractor  LangChain/程序抽取 → 严格草稿 schema      │
+│ gateway    五道验证 + 独立冲突门禁 → 字符偏移/审计    │
+│ normalize  归一化：省部级→省级、第二名→二等奖        │
+│ verify     一致性核对 + pHash 查重（P2）              │
 │ store      SQLite 规则库（学年/学院/版本/出处）     │
 └──────────────────┬─────────────────────────────────┘
                    ↓
@@ -92,8 +93,9 @@ scoreproof/
 │   ├── eval/                 # backtest：往年综测表回测
 │   ├── api/                  # FastAPI + SSE
 │   └── cli.py                # typer 命令行
-├── tests/                    # 140+ 单元测试（合成数据，无隐私）
-└── web/                      # 前端（P3）
+├── reports/                  # 可复跑评测报告（样本量、版本、置信区间）
+├── tests/                    # 246 项单元测试（合成数据，无隐私）
+└── web/                      # 前端占位（V3.0：P2 延后）
 ```
 
 ## 数据模型（三张核心表）
@@ -135,6 +137,8 @@ scoreproof/
 | `scoreproof doctor` | 环境自检（依赖/配置/规则库） |
 | `scoreproof parse-pdf 细则.pdf --tables` | 抽 PDF 文本与表格，标记疑似扫描页 |
 | `scoreproof parse-image 奖状.png --ocr` | 检查图片质量、计算 pHash 并运行 RapidOCR |
+| `scoreproof extract-rules-llm 规则文本.txt -y 2025-2026 --double-check` | LLM 抽取经过五道验证及独立冲突门禁；默认只审计不发布 |
+| `scoreproof eval-extraction-gateway tests/fixtures/gateway_negative_cases.json -y 2025-2026` | 复跑 100 条分层负例，报告各道网关及冲突门禁的 Wilson 95% 区间 |
 | `scoreproof parse-claims 综测表.xlsx` | 解析申报条目（含合并单元格 fill-down） |
 | `scoreproof import-rules 规则表.xlsx -y 2025-2026` | 规则入库（建议人工校对一遍） |
 | `scoreproof list-rules -y 2025-2026` | 查看规则库 |
@@ -155,11 +159,13 @@ scoreproof/
 
 | 阶段 | 内容 | 状态 |
 |---|---|---|
-| P0 | 定位、架构、schema、指标设计 | ✅ 已完成（规划） |
-| **P1** | Excel 解析 + 文本 PDF 细则 → 规则库 + 计算引擎 + 往年回测 | ✅ **本仓库骨架已完成** |
-| P2 | 奖状图片 → OCR → 字段抽取 → 校对界面 + pHash 查重 + 一致性核对 | 🟡 图片质量检查、预处理、RapidOCR、pHash 已完成；LLM/VLM 与校对界面待做 |
-| P3 | FastAPI + SSE + 引用面板 + 前端 | 🟡 后端接口已就绪，前端待做 |
-| P4 | Word/扫描件、向量检索 + 重排、增量索引、权限、RAGAS 闭环 | ⏳ 待做（`retrieval.VectorChannel` 已留接口） |
+| 阶段 0～1 | 口径、Schema、数据库与工程基线 | ✅ 已完成 |
+| 阶段 2 | 异构解析与 LangChain 抽取 | 🟡 DeepSeek 真实 API 烟雾测试已通过；复杂版面回归集仍待验收 |
+| 阶段 3 | 五道抽取验证 + 独立发布冲突门禁 | ✅ 代码链路与 100 条分层冻结负例完成 |
+| 阶段 4 | 增量索引、混合检索、LangChain 工具编排 | ⏳ 待做（`retrieval.VectorChannel` 仍为占位） |
+| 阶段 5 | 确定性计算与 52 人回测 | 🟡 计算核心与 41 项边界测试完成；真实回测待做 |
+| 阶段 6 | OCR + LLM/VLM + 查重 | 🟡 RapidOCR、预处理、pHash 完成；字段链路与评测待做 |
+| 阶段 7 | 消融、全量评测与结项 | ⏳ 待做；Web 三端按 V3.0 延后至 P2 |
 
 ## 测试
 

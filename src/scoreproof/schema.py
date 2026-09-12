@@ -39,9 +39,28 @@ class SourceRef(BaseModel):
     clause: str | None = Field(default=None, description="条款，如 第三章第7条")
     row: int | None = Field(default=None, description="表格行号，便于人工回查")
     text: str | None = Field(default=None, description="命中的原文片段")
+    chunk_hash: str | None = Field(
+        default=None,
+        pattern=r"^[0-9a-f]{64}$",
+        description="字符偏移所对应逻辑块的 SHA-256",
+    )
     bbox: tuple[float, float, float, float] | None = Field(
         default=None, description="PDF 坐标 (x0,y0,x1,y1)，用于高亮定位"
     )
+    char_start: int | None = Field(default=None, ge=0, description="原文块内起始字符偏移（含）")
+    char_end: int | None = Field(default=None, ge=0, description="原文块内结束字符偏移（不含）")
+
+    @model_validator(mode="after")
+    def _check_char_range(self) -> SourceRef:
+        if (self.char_start is None) != (self.char_end is None):
+            raise ValueError("char_start 与 char_end 必须同时提供")
+        if (
+            self.char_start is not None
+            and self.char_end is not None
+            and self.char_end <= self.char_start
+        ):
+            raise ValueError("char_end 必须大于 char_start")
+        return self
 
     def short(self) -> str:
         bits = [self.doc]
@@ -99,6 +118,8 @@ class Rule(BaseModel):
     college: str | None = Field(default=None, description="学院；None 表示校级通用")
     category: str = Field(min_length=1, description="类别，如 学科竞赛")
     level: str = Field(min_length=1, description="规范化后的等级/名次，如 省级二等奖")
+    rank: str | None = Field(default=None, description="独立名次字段；无法拆分时保持 None")
+    item_name: str | None = Field(default=None, description="赛事/项目名称，用于精确规则匹配")
     score: float = Field(ge=0, description="该等级对应分值")
     synonyms: list[str] = Field(default_factory=list, description="原始表述与别名，用于归一化匹配")
     constraints: ConstraintSpec = Field(default_factory=ConstraintSpec)

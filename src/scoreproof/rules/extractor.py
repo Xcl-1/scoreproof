@@ -8,30 +8,26 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
-from collections.abc import Iterable
+import re
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol
 
 from ..config import get_settings
-from ..errors import DataSourceError, UnsupportedModality
+from ..errors import DataSourceError, SchemaValidationError
 from ..normalize import normalize_academic_year, normalize_level
 from ..schema import ConstraintSpec, Rule, SourceRef
+from .gateway import ExtractionGateway, GatewayContext, GatewayReport, RuleDraftInput, chunk_hash
 
-# 给 LLM 的抽取契约（P2 接真实调用时直接复用）
-RULE_DRAFT_SCHEMA: dict[str, Any] = {
+# 给 LLM 的抽取契约直接由严格 Pydantic 模型生成，避免提示 schema 与网关漂移。
+RULE_DRAFT_SCHEMA: dict[str, Any] = RuleDraftInput.model_json_schema()
+RULE_BATCH_SCHEMA: dict[str, Any] = {
     "type": "object",
-    "properties": {
-        "category": {"type": "string", "description": "加分类别，如 学科竞赛"},
-        "level": {"type": "string", "description": "等级/名次原文，如 省级二等奖"},
-        "score": {"type": "number", "description": "该等级分值，必须来自原文数字"},
-        "synonyms": {"type": "array", "items": {"type": "string"}},
-        "cap": {"type": ["number", "null"], "description": "该项封顶，原文没有则为 null"},
-        "team_factor": {"type": ["number", "null"], "description": "团队折算系数"},
-        "clause": {"type": "string", "description": "条款编号，如 第三章第7条"},
-        "evidence_quote": {"type": "string", "description": "支撑该规则的原文片段（必须逐字摘录）"},
-    },
-    "required": ["category", "level", "score", "evidence_quote"],
+    "additionalProperties": False,
+    "properties": {"rules": {"type": "array", "items": RULE_DRAFT_SCHEMA}},
+    "required": ["rules"],
 }
 
 
@@ -47,6 +43,9 @@ class RuleDraft:
     cap: float | None = None
     team_factor: float | None = None
     clause: str | None = None
+    rank: str | None = None
+    item_name: str | None = None
+    effective_date: str | None = None
     confidence: float = 1.0
     meta: dict[str, Any] = field(default_factory=dict)
 
@@ -60,6 +59,8 @@ class RuleDraft:
         table: str | None = None,
         dedup_group: str | None = None,
         priority: int = 0,
+        char_start: int | None = None,
+        char_end: int | None = None,
     ) -> Rule:
         """草稿 -> 正式规则。**这是唯一的转换入口，便于统一审计。**"""
         canonical = normalize_level(self.level).canonical
@@ -68,6 +69,8 @@ class RuleDraft:
             college=college,
             category=self.category,
             level=canonical,
+            rank=self.rank,
+            item_name=self.item_name,
             score=float(self.score),
             synonyms=sorted({s for s in [self.level, *self.synonyms] if s and s != canonical}),
             constraints=ConstraintSpec(
@@ -75,8 +78,15 @@ class RuleDraft:
                 cap=self.cap,
                 team_factor=self.team_factor if self.team_factor is not None else 1.0,
             ),
-            source=SourceRef(doc=doc, page=page, table=table, clause=self.clause,
-                             text=self.evidence_quote[:200]),
+            source=SourceRef(
+                doc=doc,
+                page=page,
+                table=table,
+                clause=self.clause,
+                text=self.evidence_quote[:200],
+                char_start=char_start,
+                char_end=char_end,
+            ),
             priority=priority,
             raw_text=self.evidence_quote[:500],
         )
@@ -86,6 +96,16 @@ class Extractor(Protocol):
     """抽取器协议：程序抽取 / LLM 抽取都实现它。"""
 
     def extract(self, text: str, **kwargs) -> list[RuleDraft]: ...
+
+
+class ExtractionCache(Protocol):
+    """抽取缓存最小契约，RuleStore 与测试替身均可实现。"""
+
+    def get_extraction_cache(self, *, chunk_hash: str, model: str, variant: str) -> list[dict] | None: ...
+
+    def set_extraction_cache(
+        self, *, chunk_hash: str, model: str, variant: str, payloads: list[dict]
+    ) -> None: ...
 
 
 class HeuristicExtractor:
@@ -125,14 +145,22 @@ class HeuristicExtractor:
 class LLMExtractor:
     """LLM 抽取（只在配置了 API Key 时可用；默认走 DeepSeek 文本模型）。
 
-    未实现真实调用时保持显式失败 —— 宁可报"未接入"，也不返回编造数据。
+    使用 LangChain 的 OpenAI 兼容接入层调用 DeepSeek。返回值仍是未经信任的
+    草稿；生产路径应调用 ``extract_validated``，由验证网关决定是否可发布。
     """
 
-    def __init__(self, *, model: str | None = None, client: Any = None) -> None:
+    def __init__(
+        self,
+        *,
+        model: str | None = None,
+        client: Any = None,
+        cache: ExtractionCache | None = None,
+    ) -> None:
         settings = get_settings()
         self.model = model or settings.llm_model
         self.base_url = settings.llm_base_url
         self.client = client
+        self.cache = cache
 
     def available(self) -> bool:
         if self.client is not None:
@@ -140,20 +168,30 @@ class LLMExtractor:
         if not get_settings().llm_configured:
             return False
         try:
-            import openai  # noqa: F401
+            import langchain_openai  # noqa: F401
         except ImportError:
             return False
         return True
 
-    def build_prompt(self, text: str, **kwargs) -> list[dict[str, str]]:
+    def build_prompt(
+        self, text: str, *, variant: str = "direct", **kwargs
+    ) -> list[dict[str, str]]:
         """抽取提示词：明确"只抽原文出现的分值、必须给原文片段"。"""
+        if variant == "clause_first":
+            method = "先逐条识别原文中的规则条款，再从每条已识别条款抽取字段；不要合并不同条款。"
+        elif variant == "direct":
+            method = "直接从原文抽取符合 schema 的规则数组。"
+        else:
+            raise ValueError(f"未知抽取提示变体：{variant}")
         system = (
-            "你是综测加分细则的结构化抽取器。只输出 JSON 数组，每个元素符合给定 schema；"
+            "你是综测加分细则的结构化抽取器。只输出 JSON 对象 {\"rules\": [...]}，"
+            "rules 中每个元素符合给定 schema；"
             "score 必须是原文出现的数字，禁止推算、禁止补全；evidence_quote 必须逐字摘录原文。"
-            "找不到分值的条目不要输出。"
+            f"找不到分值的条目不要输出。{method}"
         )
         payload = {
-            "schema": RULE_DRAFT_SCHEMA,
+            "schema": RULE_BATCH_SCHEMA,
+            "example": {"rules": []},
             "defaults": {k: v for k, v in kwargs.items() if v is not None},
             "text": text,
         }
@@ -162,15 +200,156 @@ class LLMExtractor:
             {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
         ]
 
-    def extract(self, text: str, **kwargs) -> list[RuleDraft]:  # pragma: no cover - P2
+    def _client_for(self, *, temperature: float) -> Any:
+        if self.client is not None:
+            return self.client
+        settings = get_settings()
+        if not settings.llm_api_key:
+            raise DataSourceError("LLM 抽取不可用：缺少 DEEPSEEK_API_KEY")
+        try:
+            from langchain_openai import ChatOpenAI
+        except ImportError as exc:  # pragma: no cover - 取决于可选依赖
+            raise DataSourceError(
+                "LLM 抽取不可用：未安装 langchain-openai",
+                detail={"hint": "uv sync --extra llm"},
+            ) from exc
+        return ChatOpenAI(
+            model=self.model,
+            api_key=settings.llm_api_key,
+            base_url=self.base_url,
+            temperature=temperature,
+            max_tokens=4096,
+            model_kwargs={"response_format": {"type": "json_object"}},
+        )
+
+    @staticmethod
+    def _response_text(response: Any) -> str:
+        content = getattr(response, "content", response)
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            parts: list[str] = []
+            for block in content:
+                if isinstance(block, str):
+                    parts.append(block)
+                elif isinstance(block, Mapping) and isinstance(block.get("text"), str):
+                    parts.append(block["text"])
+            return "".join(parts)
+        raise SchemaValidationError("LLM 返回内容不是文本", detail={"type": type(content).__name__})
+
+    @staticmethod
+    def _decode_payloads(raw: str) -> list[dict[str, Any]]:
+        text = raw.strip()
+        fenced = re.fullmatch(r"```(?:json)?\s*(.*?)\s*```", text, flags=re.DOTALL | re.IGNORECASE)
+        if fenced:
+            text = fenced.group(1)
+        try:
+            payload = json.loads(text)
+        except json.JSONDecodeError as exc:
+            raise SchemaValidationError(
+                "LLM 返回的内容不是合法 JSON",
+                detail={"line": exc.lineno, "column": exc.colno},
+            ) from exc
+        if isinstance(payload, dict) and set(payload) == {"rules"}:
+            payload = payload["rules"]
+        if not isinstance(payload, list) or any(not isinstance(item, dict) for item in payload):
+            raise SchemaValidationError("LLM 返回必须是 JSON 对象数组")
+        return [dict(item) for item in payload]
+
+    def extract_payloads(
+        self,
+        text: str,
+        *,
+        variant: str = "direct",
+        temperature: float = 0.0,
+        **kwargs,
+    ) -> list[dict[str, Any]]:
         if not self.available():
             raise DataSourceError(
-                "LLM 抽取不可用：缺少 DEEPSEEK_API_KEY 或未安装 openai",
+                "LLM 抽取不可用：缺少 DEEPSEEK_API_KEY 或未安装 langchain-openai",
                 detail={"hint": "复制 .env.example 为 .env 并填入 Key，或 uv sync --extra llm"},
             )
-        raise UnsupportedModality(
-            "LLMExtractor 尚未接入真实调用（P2 任务）",
-            detail={"model": self.model, "todo": "实现 responses.create / chat.completions 解析 + 校验"},
+        digest = chunk_hash(text)
+        messages = self.build_prompt(text, variant=variant, **kwargs)
+        prompt_hash = hashlib.sha256(
+            json.dumps(messages, ensure_ascii=False, sort_keys=True).encode("utf-8")
+        ).hexdigest()[:16]
+        cache_variant = f"{variant}:t={temperature:g}:p={prompt_hash}"
+        if self.cache is not None:
+            cached = self.cache.get_extraction_cache(
+                chunk_hash=digest, model=self.model, variant=cache_variant
+            )
+            if cached is not None:
+                return cached
+        response = self._client_for(temperature=temperature).invoke(messages)
+        payloads = self._decode_payloads(self._response_text(response))
+        if self.cache is not None:
+            self.cache.set_extraction_cache(
+                chunk_hash=digest, model=self.model, variant=cache_variant, payloads=payloads
+            )
+        return payloads
+
+    def extract(self, text: str, **kwargs) -> list[RuleDraft]:
+        """兼容旧协议的严格解析入口；返回值仍不可绕过网关直接发布。"""
+        payloads = self.extract_payloads(text, **kwargs)
+        try:
+            strict = [RuleDraftInput.model_validate(item) for item in payloads]
+        except Exception as exc:
+            raise SchemaValidationError("LLM 草稿未通过严格 schema 校验") from exc
+        return [
+            RuleDraft(
+                category=item.category,
+                level=item.level,
+                score=item.score,
+                evidence_quote=item.evidence_quote,
+                synonyms=item.synonyms,
+                cap=item.cap,
+                team_factor=item.team_factor,
+                clause=item.clause,
+                rank=item.rank,
+                item_name=item.item_name,
+                effective_date=item.effective_date,
+                meta={"extractor": "llm", "model": self.model},
+            )
+            for item in strict
+        ]
+
+    def extract_validated(
+        self,
+        text: str,
+        *,
+        context: GatewayContext,
+        gateway: ExtractionGateway | None = None,
+        risk_level: Literal["normal", "high"] = "normal",
+        existing_rules: Iterable[Rule] = (),
+        **kwargs,
+    ) -> GatewayReport:
+        """执行真实抽取并立即过网关；高风险块触发第二种提示交叉验证。"""
+        checker = gateway or ExtractionGateway()
+        current_rules = list(existing_rules)
+        primary = self.extract_payloads(text, variant="direct", temperature=0.0, **kwargs)
+        preliminary = checker.validate_batch(
+            primary,
+            source_text=text,
+            context=context,
+            existing_rules=current_rules,
+        )
+        secondary = None
+        low_confidence = any(
+            issue.layer in {3, 4} for item in preliminary.items for issue in item.issues
+        )
+        if risk_level == "high" or low_confidence:
+            secondary = self.extract_payloads(
+                text, variant="clause_first", temperature=0.3, **kwargs
+            )
+        if secondary is None:
+            return preliminary
+        return checker.validate_batch(
+            primary,
+            source_text=text,
+            context=context,
+            secondary_payloads=secondary,
+            existing_rules=current_rules,
         )
 
 
@@ -198,7 +377,9 @@ def drafts_to_rules(
 
 __all__ = [
     "RULE_DRAFT_SCHEMA",
+    "RULE_BATCH_SCHEMA",
     "Extractor",
+    "ExtractionCache",
     "HeuristicExtractor",
     "LLMExtractor",
     "RuleDraft",

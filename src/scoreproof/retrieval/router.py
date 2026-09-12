@@ -214,7 +214,7 @@ class LexicalRetriever:
 
 
 class VectorChannel:
-    """真正的向量通道占位（P4：bge-m3 + Chroma/Qdrant）。
+    """真正的向量通道占位（V3.0 阶段 4：langchain-chroma）。
 
     未接入前保持显式失败，避免"以为有语义检索其实没有"的隐性错误。
     """
@@ -229,7 +229,7 @@ class VectorChannel:
 
     def search(self, query: str, *, top_k: int = 5) -> list[RetrievalHit]:  # pragma: no cover - 占位
         raise NotImplementedError(
-            "向量通道尚未接入：P4 计划用 bge-m3 + Chroma/Qdrant 实现。"
+            "向量通道尚未接入：V3.0 阶段 4 计划用 langchain-chroma 实现。"
             "在此之前兜底由 LexicalRetriever（BM25）承担。"
         )
 

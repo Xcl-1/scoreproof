@@ -8,12 +8,24 @@ from .backtest import (
     load_ground_truth,
     run_backtest,
 )
+from .gateway import (
+    GatewayEvaluationReport,
+    GatewayNegativeCase,
+    GatewayTargetResult,
+    evaluate_gateway_negatives,
+    wilson_interval,
+)
 
 __all__ = [
     "BacktestReport",
+    "GatewayEvaluationReport",
+    "GatewayNegativeCase",
+    "GatewayTargetResult",
     "ItemDiff",
     "StudentResult",
     "compare_students",
+    "evaluate_gateway_negatives",
     "load_ground_truth",
     "run_backtest",
+    "wilson_interval",
 ]

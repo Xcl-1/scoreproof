@@ -40,7 +40,9 @@ class Settings:
     llm_base_url: str = field(
         default_factory=lambda: os.getenv("SCOREPROOF_LLM_BASE_URL", "https://api.deepseek.com")
     )
-    llm_model: str = field(default_factory=lambda: os.getenv("SCOREPROOF_LLM_MODEL", "deepseek-flash"))
+    llm_model: str = field(
+        default_factory=lambda: os.getenv("SCOREPROOF_LLM_MODEL", "deepseek-v4-flash")
+    )
     llm_api_key: str | None = field(default_factory=lambda: os.getenv("DEEPSEEK_API_KEY") or None)
 
     vlm_provider: str | None = field(

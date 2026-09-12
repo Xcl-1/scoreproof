@@ -49,7 +49,8 @@ retrieval = [
 ]
 # LLM 抽取（规则结构化 / 字段抽取）
 llm = [
-    "openai>=1.40",
+    # LangChain 生态 API 变动快：按 V3.0 计划固定精确版本，升级必须重跑冻结评测集。
+    "langchain-openai==1.6.2",
 ]
 dev = [
     "pytest>=8.2",

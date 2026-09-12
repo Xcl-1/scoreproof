@@ -16,10 +16,13 @@ from . import __version__
 from .calc.engine import EngineConfig, compute_all
 from .config import get_settings
 from .eval.backtest import load_ground_truth, run_backtest
+from .eval.gateway import GatewayNegativeCase, evaluate_gateway_negatives
 from .ingest.excel_loader import load_claims, load_rules
 from .ingest.image_loader import check_quality, phash, preprocess, run_ocr
 from .ingest.pdf_loader import load_pdf
 from .retrieval.router import Router, clauses_from_pdf_pages
+from .rules.extractor import LLMExtractor
+from .rules.gateway import GatewayContext
 from .rules.store import RuleStore
 from .schema import Claim, Ruleset
 
@@ -326,8 +329,88 @@ def route_pdf(
 
 
 # ======================================================================
-# 回测
+# 可信抽取与回测
 # ======================================================================
+
+
+@app.command("extract-rules-llm")
+def extract_rules_llm(
+    source: Path = typer.Argument(..., exists=True, help="待抽取的 UTF-8 规则文本块"),
+    academic_year: str = typer.Option(..., "--year", "-y", help="规则适用学年"),
+    college: str | None = typer.Option(None, "--college"),
+    page: int | None = typer.Option(None, "--page", min=1),
+    double_check: bool = typer.Option(
+        False, "--double-check", help="使用第二种提示独立抽取并交叉验证"
+    ),
+    publish: bool = typer.Option(
+        False, "--publish", help="人工确认后发布；未通过网关的批次仍会被强制阻止"
+    ),
+    report_out: Path | None = typer.Option(None, "--report-out", help="保存完整网关报告 JSON"),
+    db: Path | None = typer.Option(None, "--db"),
+) -> None:
+    """调用文本模型抽取规则，并经过五道验证及独立发布冲突门禁。"""
+    settings = get_settings()
+    text = source.read_text(encoding="utf-8")
+    context = GatewayContext(
+        academic_year=academic_year,
+        college=college,
+        doc=source.name,
+        page=page,
+    )
+    with RuleStore(db or settings.db_path) as store:
+        extractor = LLMExtractor(cache=store)
+        report = extractor.extract_validated(
+            text,
+            context=context,
+            risk_level="high" if double_check else "normal",
+            existing_rules=store.list_rules(enabled_only=False),
+        )
+        if publish:
+            count = store.publish_extraction_report(report, model=extractor.model)
+            console.print(f"[green]已发布 {count} 条通过网关的规则[/green]")
+        else:
+            store.record_extraction_report(report, model=extractor.model)
+    console.print_json(json.dumps(report.metrics(), ensure_ascii=False))
+    if report_out:
+        report_out.parent.mkdir(parents=True, exist_ok=True)
+        report_out.write_text(report.model_dump_json(indent=2), encoding="utf-8")
+        console.print(f"已写出：{report_out}")
+    if not report.publishable:
+        raise typer.Exit(code=2)
+
+
+@app.command("eval-extraction-gateway")
+def eval_extraction_gateway(
+    dataset: Path = typer.Argument(..., exists=True, help="网关负例集 JSON"),
+    academic_year: str = typer.Option(..., "--year", "-y"),
+    college: str | None = typer.Option(None, "--college"),
+    out: Path | None = typer.Option(None, "--out", help="保存评测报告 JSON"),
+) -> None:
+    """复跑分层构造负例，报告五道校验与发布门禁的 Wilson 区间。"""
+    raw = json.loads(dataset.read_text(encoding="utf-8"))
+    if not isinstance(raw, dict) or not isinstance(raw.get("cases"), list):
+        raise typer.BadParameter("数据集必须是包含 dataset_version 与 cases 数组的 JSON 对象")
+    cases = [GatewayNegativeCase.model_validate(item) for item in raw["cases"]]
+    report = evaluate_gateway_negatives(
+        cases,
+        context=GatewayContext(
+            academic_year=academic_year,
+            college=college,
+            doc=dataset.name,
+        ),
+        dataset_version=str(raw.get("dataset_version") or "unversioned"),
+    )
+    encoded = report.model_dump_json(indent=2)
+    console.print_json(encoded)
+    if out:
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(encoded, encoding="utf-8")
+        console.print(f"已写出：{out}")
+    target_failed = any(
+        result.detection_rate < 0.99 for result in report.target_results.values()
+    )
+    if report.detection_rate < 0.99 or target_failed:
+        raise typer.Exit(code=2)
 
 
 @app.command("backtest")
@@ -406,6 +489,7 @@ def doctor() -> None:
         ("docx", "Word 解析", "核心"),
         ("fastapi", "服务层", "核心"),
         ("rank_bm25", "兜底检索", "可选"),
+        ("langchain_openai", "LLM 抽取接入", "llm"),
         ("rapidocr_onnxruntime", "OCR", "P2"),
         ("imagehash", "查重", "P2"),
         ("cv2", "图像预处理", "P2"),

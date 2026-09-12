@@ -1,0 +1,50 @@
+{
+  "report_version": "deepseek-smoke-v1",
+  "executed_at": "2026-09-12T12:32:25+08:00",
+  "model": "deepseek-v4-flash",
+  "base_url": "https://api.deepseek.com",
+  "credential_exposed": false,
+  "source": {
+    "document": "fzu_ccds_2026_recommendation_score_rules.pdf",
+    "document_sha256": "1C1FC3C899017E641F7A92430DD342634C4F50DF5D67EBAB6F5547E3D4B840C5",
+    "page": 6,
+    "chunk_hash": "2d833e7fdb3a11cff7866a2cbc349bb4f7a5c9cf81bcbd094cf1d4f5817a53da",
+    "contains_personal_data": false
+  },
+  "real_api": {
+    "calls": 2,
+    "primary_variant": "direct",
+    "secondary_variant": "clause_first",
+    "items_per_call": 4,
+    "semantic_fields_consistent": true,
+    "raw_payloads_identical": false,
+    "raw_difference": "secondary extraction emitted synonyms=[] while primary omitted the optional field"
+  },
+  "gateway": {
+    "quote_offsets_valid": 4,
+    "quote_offsets_total": 4,
+    "default_context": {
+      "accepted": 0,
+      "review": 4,
+      "reason": "invalid_level",
+      "publishable": false
+    },
+    "document_allowlist_context": {
+      "allowed_levels": [
+        "第一专利人"
+      ],
+      "accepted": 4,
+      "review": 0,
+      "publishable": true,
+      "isolated_database_rules_published": 4
+    }
+  },
+  "acceptance": {
+    "deepseek_real_call_succeeded": true,
+    "missing_key_fails_explicitly": true,
+    "five_gate_validation_executed": true,
+    "production_database_modified": false,
+    "status": "passed_with_cli_configuration_gap"
+  },
+  "remaining_gap": "The CLI does not yet expose document-specific allowed_levels, so this public intellectual-property rule batch is blocked under the default context."
+}
