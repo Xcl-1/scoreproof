@@ -57,9 +57,9 @@ uv run scoreproof serve --port 8000
                    ↓
 ┌─ 检索层 ──────────────────────────────────────────┐
 │ structured  精确查表（主通道，给确定分值）           │
-│ fallback    原文检索（BM25，兜底 + 溯源）           │
+│ fallback    BM25 + Chroma 向量并行召回 → RRF 融合   │
 │ router      双通道调度 + 置信度 + 未命中拒答         │
-│ manifest    文档/页块 Hash + 增量 diff + 原子快照     │
+│ manifest    双级 Hash + BM25/向量同批快照 + 原子切换  │
 └──────────────────┬─────────────────────────────────┘
                    ↓
 ┌─ 计算层（纯 Python，单元测试覆盖）─────────────────┐
@@ -89,14 +89,14 @@ scoreproof/
 │   ├── errors.py             # 带 code 的领域异常
 │   ├── ingest/               # excel / pdf / docx 分流（含合并单元格 fill-down）
 │   ├── rules/                # store(SQLite) + extractor(规则抽取)
-│   ├── indexing/             # 双级 Hash + manifest + 增量 diff + 回滚
+│   ├── indexing/             # 双级 Hash + manifest + BM25/Chroma 同批发布
 │   ├── calc/                 # 计算引擎（纯函数 + 可解释账本）
-│   ├── retrieval/            # 双通道：structured 主 + 原文兜底 + router
+│   ├── retrieval/            # structured 主 + BM25/向量 + RRF + router
 │   ├── eval/                 # backtest：往年综测表回测
 │   ├── api/                  # FastAPI + SSE
 │   └── cli.py                # typer 命令行
 ├── reports/                  # 可复跑评测报告（样本量、版本、置信区间）
-├── tests/                    # 262 项单元测试（合成数据，无隐私）
+├── tests/                    # 283 项单元测试（合成数据，无隐私）
 └── web/                      # 前端占位（V3.0：P2 延后）
 ```
 
@@ -139,6 +139,8 @@ scoreproof/
 | `scoreproof doctor` | 环境自检（依赖/配置/规则库） |
 | `scoreproof parse-pdf 细则.pdf --tables` | 抽 PDF 文本与表格，标记疑似扫描页 |
 | `scoreproof sync-pdf-manifest 细则.pdf --doc-id school-rules` | 计算文档/页块 Hash，原子发布增量 manifest |
+| `scoreproof sync-pdf-hybrid 细则.pdf --doc-id school-rules` | 将 BM25 与 Chroma 快照作为同一 manifest 批次发布 |
+| `scoreproof search-index "第一专利人如何加分"` | BM25/向量并行召回并输出 RRF 排名与两路名次 |
 | `scoreproof rollback-index-manifest school-rules` | 将活动索引回滚到上一份完整 manifest |
 | `scoreproof delete-index-document school-rules` | 从活动索引删除文档并保留历史快照 |
 | `scoreproof parse-image 奖状.png --ocr` | 检查图片质量、计算 pHash 并运行 RapidOCR |
@@ -167,7 +169,7 @@ scoreproof/
 | 阶段 0～1 | 口径、Schema、数据库与工程基线 | ✅ 已完成 |
 | 阶段 2 | 异构解析与 LangChain 抽取 | 🟡 DeepSeek 真实 API 烟雾测试已通过；复杂版面回归集仍待验收 |
 | 阶段 3 | 五道抽取验证 + 独立发布冲突门禁 | ✅ 代码链路与 100 条分层冻结负例完成 |
-| 阶段 4 | 增量索引、混合检索、LangChain 工具编排 | 🟡 双级 Hash、manifest、diff、删除与回滚已完成；向量/RRF 与工具编排待做 |
+| 阶段 4 | 增量索引、混合检索、LangChain 工具编排 | 🟡 双级 Hash、BM25/Chroma 同批快照与 RRF 已完成；预训练 Embedding 评测、Rerank 与工具编排待做 |
 | 阶段 5 | 确定性计算与 52 人回测 | 🟡 计算核心与 41 项边界测试完成；真实回测待做 |
 | 阶段 6 | OCR + LLM/VLM + 查重 | 🟡 RapidOCR、预处理、pHash 完成；字段链路与评测待做 |
 | 阶段 7 | 消融、全量评测与结项 | ⏳ 待做；Web 三端按 V3.0 延后至 P2 |

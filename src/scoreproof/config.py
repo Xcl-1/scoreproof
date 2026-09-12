@@ -35,6 +35,14 @@ class Settings:
     db_path: Path = field(
         default_factory=lambda: Path(os.getenv("SCOREPROOF_DB_PATH", "data/rules/rules.sqlite"))
     )
+    index_db_path: Path = field(
+        default_factory=lambda: Path(
+            os.getenv("SCOREPROOF_INDEX_DB_PATH", "data/index/index.sqlite")
+        )
+    )
+    vector_dir: Path = field(
+        default_factory=lambda: Path(os.getenv("SCOREPROOF_VECTOR_DIR", "data/index/chroma"))
+    )
     log_level: str = field(default_factory=lambda: os.getenv("SCOREPROOF_LOG_LEVEL", "INFO"))
 
     llm_base_url: str = field(
@@ -70,7 +78,7 @@ class Settings:
         return bool(self.llm_api_key)
 
     def ensure_dirs(self) -> None:
-        for d in (self.raw_dir, self.rules_dir, self.eval_dir):
+        for d in (self.raw_dir, self.rules_dir, self.eval_dir, self.index_db_path.parent, self.vector_dir):
             d.mkdir(parents=True, exist_ok=True)
 
     def safe_repr(self) -> dict:
@@ -78,6 +86,8 @@ class Settings:
         return {
             "data_dir": str(self.data_dir),
             "db_path": str(self.db_path),
+            "index_db_path": str(self.index_db_path),
+            "vector_dir": str(self.vector_dir),
             "llm_model": self.llm_model,
             "llm_base_url": self.llm_base_url,
             "llm_configured": self.llm_configured,

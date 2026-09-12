@@ -1,0 +1,51 @@
+{
+  "report_version": "hybrid-retrieval-smoke-v1",
+  "run_at": "2026-09-12T15:18:36+08:00",
+  "source": {
+    "path": "data/raw/public/fzu_ccds_2026_recommendation_score_rules.pdf",
+    "public_fixture": true,
+    "pages": 6,
+    "document_hash": "1c1fc3c899017e641f7a92430dd342634c4f50df5d67ebab6f5547e3d4b840c5"
+  },
+  "index": {
+    "embedding_model": "scoreproof-hash-v1",
+    "embedding_backend": "deterministic dense feature hashing",
+    "vector_store": "langchain-chroma 1.1.0 / ChromaDB",
+    "first_sync": {
+      "action": "published",
+      "manifest_id": "im_3f889b4161e24c29",
+      "bm25_doc_count": 6,
+      "vector_doc_count": 6,
+      "embedded_count": 6,
+      "status": "ready"
+    },
+    "second_sync": {
+      "action": "unchanged",
+      "same_manifest": true,
+      "rebuild_count": 0,
+      "unchanged_count": 6
+    }
+  },
+  "query": {
+    "text": "第一专利人知识产权如何加分",
+    "top_hit": "fzu-ccds-2026-rules:page:6",
+    "expected_page": 6,
+    "page_correct": true,
+    "bm25_rank": 1,
+    "vector_rank": 1,
+    "fusion": "RRF"
+  },
+  "gates": {
+    "bm25_and_vector_same_manifest_batch": true,
+    "idempotent_second_sync": true,
+    "real_persistent_chroma_write_and_read": true,
+    "plain_manifest_upgrade_backfill_tested": true,
+    "missing_vector_snapshot_repair_tested": true,
+    "pretrained_semantic_embedding_evaluated": false,
+    "retrieval_quality_dataset_evaluated": false
+  },
+  "limitations": [
+    "scoreproof-hash-v1 用于离线、确定性的链路验收，不等同于预训练语义 Embedding。",
+    "Hit@5、MRR@10 与向量增量收益必须在阶段 4.3 的冻结检索集上如实评测。"
+  ]
+}

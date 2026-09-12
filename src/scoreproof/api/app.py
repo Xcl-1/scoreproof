@@ -22,7 +22,9 @@ from .. import __version__
 from ..calc.engine import EngineConfig, compute_claims
 from ..config import get_settings
 from ..errors import ScoreProofError
+from ..indexing import HybridIndexManifestStore
 from ..ingest.excel_loader import load_rules
+from ..retrieval.hybrid import HybridRetriever
 from ..retrieval.router import Router
 from ..rules.store import RuleStore
 from ..schema import Claim, Evidence, Ruleset
@@ -65,6 +67,14 @@ class CalcRequest(BaseModel):
 class ExplainRequest(BaseModel):
     claim: ClaimIn
     top_k: int = Field(default=5, ge=1, le=20)
+
+
+class SearchRequest(BaseModel):
+    query: str = Field(min_length=1)
+    top_k: int = Field(default=5, ge=1, le=20)
+    academic_year: str | None = None
+    college: str | None = None
+    doc_id: str | None = None
 
 
 class EvidenceIn(BaseModel):
@@ -263,6 +273,37 @@ def create_app() -> FastAPI:
                         college=req.claim.college)
         res = router.route(req.claim.to_claim())
         return {"refused": res.refused, "channel": res.channel, "reason": res.reason}
+
+    @app.post("/api/search", tags=["retrieval"])
+    def search(req: SearchRequest) -> dict:
+        """查询活动混合索引；返回 RRF 排名及两路原始名次。"""
+        settings = get_state().settings
+        with HybridIndexManifestStore(
+            settings.index_db_path,
+            vector_dir=settings.vector_dir,
+            embedding_model="scoreproof-hash-v1",
+        ) as index:
+            hits = HybridRetriever(
+                index,
+                academic_year=req.academic_year,
+                college=req.college,
+                doc_id=req.doc_id,
+            ).search(req.query, top_k=req.top_k)
+        return {
+            "count": len(hits),
+            "hits": [
+                {
+                    "id": hit.clause.id,
+                    "text": hit.clause.text,
+                    "source": hit.clause.source.model_dump(mode="json"),
+                    "score": hit.score,
+                    "rank": hit.rank,
+                    "channel": hit.channel,
+                    "component_ranks": hit.component_ranks,
+                }
+                for hit in hits
+            ],
+        }
 
     # ---------------- 证据 / 多模态（P2 入口） ----------------
 

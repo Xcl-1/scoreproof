@@ -20,6 +20,7 @@ from typing import Literal, Protocol
 from ..calc.engine import EngineConfig, MatchOutcome, RuleIndex, match_claim
 from ..normalize import normalize_level
 from ..schema import Claim, Rule, Ruleset, SourceRef
+from ..tokenize import tokenize_for_search
 
 ChannelName = Literal["structured", "vector", "none"]
 
@@ -48,6 +49,8 @@ class RetrievalHit:
     clause: Clause
     score: float
     rank: int = 0
+    channel: Literal["bm25", "vector", "rrf"] | None = None
+    component_ranks: dict[str, int] = field(default_factory=dict)
 
 
 class Retriever(Protocol):
@@ -182,11 +185,7 @@ class LexicalRetriever:
     @staticmethod
     def _tokenize(text: str) -> list[str]:
         """中文按字符 bigram + 英文/数字按词切分（无需分词器依赖）。"""
-        text = re.sub(r"\s+", "", text)
-        words = re.findall(r"[A-Za-z]+|\d+(?:\.\d+)?", text)
-        cjk = re.findall(r"[\u4e00-\u9fff]", text)
-        bigrams = ["".join(pair) for pair in zip(cjk, cjk[1:], strict=False)]
-        return words + cjk + bigrams
+        return tokenize_for_search(text)
 
     def _build(self) -> None:
         if self._bm25 is not None:
@@ -209,7 +208,15 @@ class LexicalRetriever:
         for rank, i in enumerate(ranked):
             if scores[i] <= 0:
                 continue
-            hits.append(RetrievalHit(clause=self.clauses[i], score=float(scores[i]), rank=rank + 1))
+            hits.append(
+                RetrievalHit(
+                    clause=self.clauses[i],
+                    score=float(scores[i]),
+                    rank=rank + 1,
+                    channel="bm25",
+                    component_ranks={"bm25": rank + 1},
+                )
+            )
         return hits
 
 

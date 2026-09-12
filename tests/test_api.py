@@ -6,6 +6,8 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
+from pathlib import Path
 
 import pytest
 
@@ -15,13 +17,18 @@ pytest.importorskip("httpx")
 from fastapi.testclient import TestClient  # noqa: E402
 
 from scoreproof.api.app import app, get_state  # noqa: E402
-from scoreproof.schema import Evidence, Ruleset  # noqa: E402
+from scoreproof.indexing import DocumentChunk, HybridIndexManifestStore  # noqa: E402
+from scoreproof.schema import (  # noqa: E402
+    Evidence,
+    Ruleset,
+    SourceRef,  # noqa: E402
+)
 
 from .conftest import make_rule  # noqa: E402
 
 
 @pytest.fixture
-def client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
+def client(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> TestClient:
     ruleset = Ruleset(
         rules=[
             make_rule("省级一等奖", 10, group="学科竞赛", cap=20, rule_id="r1"),
@@ -32,6 +39,15 @@ def client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
     state = get_state()
     monkeypatch.setattr(state, "ruleset", ruleset)
     monkeypatch.setattr(state, "evidence", {})
+    monkeypatch.setattr(
+        state,
+        "settings",
+        replace(
+            state.settings,
+            index_db_path=tmp_path / "index.sqlite",
+            vector_dir=tmp_path / "chroma",
+        ),
+    )
     with TestClient(app) as c:
         # startup 钩子会尝试从磁盘加载，这里再注入一次确保用的是内存规则
         get_state().ruleset = ruleset
@@ -133,6 +149,53 @@ class TestRetrievalEndpoints:
     def test_refusal_check_negative(self, client: TestClient) -> None:
         body = client.post("/api/refusal-check", json={"claim": CLAIM_OK}).json()
         assert body["refused"] is False
+
+    def test_hybrid_search(self, client: TestClient) -> None:
+        settings = get_state().settings
+        chunks = [
+            DocumentChunk(
+                logical_key=f"page:{index}",
+                text=text,
+                kind="page",
+                source=SourceRef(doc="rules.pdf", page=index, text=text),
+                metadata={"academic_year": "2025-2026", "college": "计算机学院"},
+            )
+            for index, text in enumerate(
+                [
+                    "学科竞赛国家级一等奖计十五分",
+                    "志愿服务每满二十小时计一分",
+                    "文体活动校级一等奖计三分",
+                    "知识产权第一专利人可申请创新加分",
+                ],
+                start=1,
+            )
+        ]
+        with HybridIndexManifestStore(
+            settings.index_db_path,
+            vector_dir=settings.vector_dir,
+            embedding_model="scoreproof-hash-v1",
+        ) as index:
+            index.sync_document(
+                doc_id="rules",
+                source_path="rules.pdf",
+                document_bytes=b"rules-v1",
+                chunks=chunks,
+                embedding_model="scoreproof-hash-v1",
+            )
+        response = client.post(
+            "/api/search",
+            json={
+                "query": "志愿服务",
+                "top_k": 2,
+                "academic_year": "2025-2026",
+                "college": "计算机学院",
+            },
+        )
+        assert response.status_code == 200
+        body = response.json()
+        assert body["count"] == 2
+        assert body["hits"][0]["id"] == "rules:page:2"
+        assert body["hits"][0]["channel"] == "rrf"
 
 
 class TestEvidence:

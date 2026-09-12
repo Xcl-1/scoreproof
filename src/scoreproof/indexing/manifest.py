@@ -169,6 +169,7 @@ class IndexManifestStore:
         document_bytes: bytes,
         chunks: Sequence[DocumentChunk],
         embedding_model: str,
+        force_publish: bool = False,
     ) -> SyncResult:
         """建立完整快照并原子发布，返回需要重建索引的逻辑块。"""
         doc_id = doc_id.strip()
@@ -186,7 +187,8 @@ class IndexManifestStore:
         diff = self._diff(previous, prepared, model_changed=previous_model != embedding_model)
 
         if (
-            current is not None
+            not force_publish
+            and current is not None
             and not current["deleted"]
             and current["document_hash"] == digest
             and not diff.added_keys

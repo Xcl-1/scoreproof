@@ -17,10 +17,15 @@ from .calc.engine import EngineConfig, compute_all
 from .config import get_settings
 from .eval.backtest import load_ground_truth, run_backtest
 from .eval.gateway import GatewayNegativeCase, evaluate_gateway_negatives
-from .indexing import DocumentChunk, IndexManifestStore
+from .indexing import (
+    DocumentChunk,
+    HybridIndexManifestStore,
+    IndexManifestStore,
+)
 from .ingest.excel_loader import load_claims, load_rules
 from .ingest.image_loader import check_quality, phash, preprocess, run_ocr
 from .ingest.pdf_loader import load_pdf
+from .retrieval.hybrid import HybridRetriever
 from .retrieval.router import Router, clauses_from_pdf_pages
 from .rules.extractor import LLMExtractor
 from .rules.gateway import GatewayContext
@@ -189,6 +194,101 @@ def sync_pdf_manifest(
     payload = result.model_dump(mode="json")
     payload["rebuild_keys"] = result.diff.rebuild_keys
     console.print_json(json.dumps(payload, ensure_ascii=False))
+
+
+@app.command("sync-pdf-hybrid")
+def sync_pdf_hybrid(
+    pdf: Path = typer.Argument(..., exists=True, dir_okay=False, help="待同步的规则 PDF"),
+    doc_id: str | None = typer.Option(None, "--doc-id", help="稳定文档 ID；默认使用文件名"),
+    academic_year: str | None = typer.Option(None, "--year", "-y"),
+    college: str | None = typer.Option(None, "--college"),
+    embedding_model: str = typer.Option("scoreproof-hash-v1", "--embedding-model"),
+    db: Path | None = typer.Option(None, "--db", help="检索 Manifest SQLite"),
+    vector_dir: Path | None = typer.Option(None, "--vector-dir", help="Chroma 持久化目录"),
+) -> None:
+    """把 PDF 作为同一 Manifest 批次发布到 BM25 与 Chroma。"""
+    settings = get_settings()
+    pages = load_pdf(pdf)
+    scanned_pages = [page.page for page in pages if not page.text.strip()]
+    if scanned_pages:
+        console.print(
+            f"[yellow]以下页面没有可索引文本，必须先 OCR，未发布索引：{scanned_pages}[/yellow]"
+        )
+        raise typer.Exit(code=2)
+    chunks = [
+        DocumentChunk(
+            logical_key=f"page:{page.page}",
+            text=page.text,
+            kind="page",
+            source=SourceRef(doc=pdf.name, page=page.page, text=page.text[:200]),
+            metadata={
+                "academic_year": academic_year,
+                "college": college,
+                "block_count": len(page.blocks),
+                "is_probably_scanned": page.is_probably_scanned,
+            },
+        )
+        for page in pages
+    ]
+    if not chunks:
+        console.print("[yellow]PDF 没有可索引文本；疑似扫描件需先 OCR[/yellow]")
+        raise typer.Exit(code=2)
+    with HybridIndexManifestStore(
+        db or settings.index_db_path,
+        vector_dir=vector_dir or settings.vector_dir,
+        embedding_model=embedding_model,
+    ) as store:
+        result = store.sync_document(
+            doc_id=doc_id or pdf.name,
+            source_path=pdf,
+            document_bytes=pdf.read_bytes(),
+            chunks=chunks,
+            embedding_model=embedding_model,
+        )
+        batch = store.search_batch(result.manifest_id) if result.manifest_id else None
+    payload = result.model_dump(mode="json")
+    payload["rebuild_keys"] = result.diff.rebuild_keys
+    payload["search_batch"] = batch.model_dump(mode="json") if batch else None
+    console.print_json(json.dumps(payload, ensure_ascii=False, default=str))
+
+
+@app.command("search-index")
+def search_index(
+    query: str = typer.Argument(..., help="待检索的问题或条款关键词"),
+    top_k: int = typer.Option(5, "--top-k", min=1, max=20),
+    academic_year: str | None = typer.Option(None, "--year", "-y"),
+    college: str | None = typer.Option(None, "--college"),
+    doc_id: str | None = typer.Option(None, "--doc-id"),
+    embedding_model: str = typer.Option("scoreproof-hash-v1", "--embedding-model"),
+    db: Path | None = typer.Option(None, "--db"),
+    vector_dir: Path | None = typer.Option(None, "--vector-dir"),
+) -> None:
+    """查询活动 Manifest：BM25 与向量并行召回后用 RRF 融合。"""
+    settings = get_settings()
+    with HybridIndexManifestStore(
+        db or settings.index_db_path,
+        vector_dir=vector_dir or settings.vector_dir,
+        embedding_model=embedding_model,
+    ) as store:
+        hits = HybridRetriever(
+            store,
+            academic_year=academic_year,
+            college=college,
+            doc_id=doc_id,
+        ).search(query, top_k=top_k)
+    payload = [
+        {
+            "id": hit.clause.id,
+            "text": hit.clause.text,
+            "source": hit.clause.source.model_dump(mode="json"),
+            "score": hit.score,
+            "rank": hit.rank,
+            "channel": hit.channel,
+            "component_ranks": hit.component_ranks,
+        }
+        for hit in hits
+    ]
+    console.print_json(json.dumps({"count": len(payload), "hits": payload}, ensure_ascii=False))
 
 
 @app.command("rollback-index-manifest")
@@ -561,6 +661,8 @@ def doctor() -> None:
 
     add("数据目录", settings.data_dir.exists(), str(settings.data_dir))
     add("规则库", settings.db_path.exists(), str(settings.db_path))
+    add("混合索引库", settings.index_db_path.exists(), str(settings.index_db_path))
+    add("向量目录", settings.vector_dir.exists(), str(settings.vector_dir))
     add("LLM", settings.llm_configured, f"{settings.llm_model} @ {settings.llm_base_url}")
     for mod, note, extra in (
         ("pandas", "Excel 解析", "核心"),
@@ -569,7 +671,9 @@ def doctor() -> None:
         ("pdfplumber", "PDF 表格", "可选"),
         ("docx", "Word 解析", "核心"),
         ("fastapi", "服务层", "核心"),
-        ("rank_bm25", "兜底检索", "可选"),
+        ("rank_bm25", "BM25 召回", "retrieval"),
+        ("chromadb", "向量持久化", "retrieval"),
+        ("langchain_chroma", "LangChain 向量检索", "retrieval"),
         ("langchain_openai", "LLM 抽取接入", "llm"),
         ("rapidocr_onnxruntime", "OCR", "P2"),
         ("imagehash", "查重", "P2"),
