@@ -29,3 +29,20 @@ __all__ = [
     "run_backtest",
     "wilson_interval",
 ]
+from .retrieval import (
+    RetrievalAblationReport,
+    RetrievalCase,
+    RetrievalVariantReport,
+    build_ablation_report,
+    evaluate_retriever,
+    load_retrieval_cases,
+)
+
+__all__ = [
+    "RetrievalAblationReport",
+    "RetrievalCase",
+    "RetrievalVariantReport",
+    "build_ablation_report",
+    "evaluate_retriever",
+    "load_retrieval_cases",
+]

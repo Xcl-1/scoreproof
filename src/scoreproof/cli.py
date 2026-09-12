@@ -6,7 +6,9 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Sequence
 from pathlib import Path
+from typing import Any
 
 import typer
 from rich.console import Console
@@ -17,16 +19,26 @@ from .calc.engine import EngineConfig, compute_all
 from .config import get_settings
 from .eval.backtest import load_ground_truth, run_backtest
 from .eval.gateway import GatewayNegativeCase, evaluate_gateway_negatives
+from .eval.retrieval import (
+    build_ablation_report,
+    evaluate_retriever,
+    load_retrieval_cases,
+)
 from .indexing import (
     DocumentChunk,
+    EmbeddingFunction,
+    FastEmbedEmbeddings,
     HybridIndexManifestStore,
     IndexManifestStore,
+    make_embedding_provider,
 )
 from .ingest.excel_loader import load_claims, load_rules
 from .ingest.image_loader import check_quality, phash, preprocess, run_ocr
 from .ingest.pdf_loader import load_pdf
-from .retrieval.hybrid import HybridRetriever
-from .retrieval.router import Router, clauses_from_pdf_pages
+from .retrieval.hybrid import BM25Retriever, HybridRetriever
+from .retrieval.query import rewrite_retrieval_query
+from .retrieval.rerank import FastEmbedReranker, RerankingRetriever
+from .retrieval.router import Retriever, Router, clauses_from_pdf_pages
 from .rules.extractor import LLMExtractor
 from .rules.gateway import GatewayContext
 from .rules.store import RuleStore
@@ -38,6 +50,90 @@ app = typer.Typer(
     add_completion=False,
 )
 console = Console()
+
+
+def _embedding_provider(
+    *, backend: str, model_name: str | None, cache_dir: Path
+) -> tuple[EmbeddingFunction, str]:
+    try:
+        return make_embedding_provider(backend=backend, model_name=model_name, cache_dir=cache_dir)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+
+
+def _pdf_index_chunks(
+    *,
+    pdf: Path,
+    pages: Sequence[Any],
+    chunk_mode: str,
+    academic_year: str | None,
+    college: str | None,
+) -> list[DocumentChunk]:
+    if chunk_mode not in {"page", "block"}:
+        raise typer.BadParameter("chunk-mode 只支持 page 或 block")
+    common = {"academic_year": academic_year, "college": college}
+    if chunk_mode == "page":
+        return [
+            DocumentChunk(
+                logical_key=f"page:{page.page}",
+                text=page.text,
+                kind="page",
+                source=SourceRef(doc=pdf.name, page=page.page, text=page.text[:200]),
+                metadata={
+                    **common,
+                    "block_count": len(page.blocks),
+                    "is_probably_scanned": page.is_probably_scanned,
+                },
+            )
+            for page in pages
+        ]
+    chunks: list[DocumentChunk] = []
+    for page in pages:
+        raw_texts = [str(block.get("text", "")).strip() for block in page.blocks]
+        index_texts = _table_context_texts(raw_texts)
+        for block_index, block in enumerate(page.blocks):
+            source_text = raw_texts[block_index]
+            if not source_text:
+                continue
+            text = index_texts[block_index]
+            bbox = block.get("bbox")
+            chunks.append(
+                DocumentChunk(
+                    logical_key=f"page:{page.page}:block:{block_index}",
+                    text=text,
+                    kind="paragraph",
+                    source=SourceRef(
+                        doc=pdf.name,
+                        page=page.page,
+                        text=source_text[:200],
+                        bbox=tuple(bbox) if bbox else None,
+                    ),
+                    metadata={
+                        **common,
+                        "block_index": block_index,
+                        **({"original_text": source_text} if text != source_text else {}),
+                    },
+                )
+            )
+    return chunks
+
+
+def _table_context_texts(texts: Sequence[str]) -> list[str]:
+    """把 PDF 表格中独立的级别单元格前缀到后续获奖行，保留原 block ID。"""
+    level_headers = {"国际级", "国家级", "省部级", "校级"}
+    award_markers = ("特等奖", "一等奖", "二等奖", "三等奖", "单项奖")
+    level: str | None = None
+    enriched: list[str] = []
+    for text in texts:
+        compact = "".join(text.split())
+        if compact in level_headers:
+            level = compact
+            enriched.append(text)
+        elif level and text and any(marker in compact for marker in award_markers):
+            enriched.append(f"{level}\n{text}")
+        else:
+            enriched.append(text)
+    return enriched
 
 
 def _version_callback(value: bool) -> None:
@@ -202,7 +298,10 @@ def sync_pdf_hybrid(
     doc_id: str | None = typer.Option(None, "--doc-id", help="稳定文档 ID；默认使用文件名"),
     academic_year: str | None = typer.Option(None, "--year", "-y"),
     college: str | None = typer.Option(None, "--college"),
-    embedding_model: str = typer.Option("scoreproof-hash-v1", "--embedding-model"),
+    chunk_mode: str = typer.Option("page", "--chunk-mode", help="page 或 block"),
+    embedding_backend: str = typer.Option("hash", "--embedding-backend", help="hash 或 fastembed"),
+    embedding_model: str | None = typer.Option(None, "--embedding-model"),
+    model_cache: Path | None = typer.Option(None, "--model-cache"),
     db: Path | None = typer.Option(None, "--db", help="检索 Manifest SQLite"),
     vector_dir: Path | None = typer.Option(None, "--vector-dir", help="Chroma 持久化目录"),
 ) -> None:
@@ -215,35 +314,33 @@ def sync_pdf_hybrid(
             f"[yellow]以下页面没有可索引文本，必须先 OCR，未发布索引：{scanned_pages}[/yellow]"
         )
         raise typer.Exit(code=2)
-    chunks = [
-        DocumentChunk(
-            logical_key=f"page:{page.page}",
-            text=page.text,
-            kind="page",
-            source=SourceRef(doc=pdf.name, page=page.page, text=page.text[:200]),
-            metadata={
-                "academic_year": academic_year,
-                "college": college,
-                "block_count": len(page.blocks),
-                "is_probably_scanned": page.is_probably_scanned,
-            },
-        )
-        for page in pages
-    ]
+    chunks = _pdf_index_chunks(
+        pdf=pdf,
+        pages=pages,
+        chunk_mode=chunk_mode,
+        academic_year=academic_year,
+        college=college,
+    )
     if not chunks:
         console.print("[yellow]PDF 没有可索引文本；疑似扫描件需先 OCR[/yellow]")
         raise typer.Exit(code=2)
+    embeddings, model_version = _embedding_provider(
+        backend=embedding_backend,
+        model_name=embedding_model,
+        cache_dir=model_cache or settings.model_cache_dir,
+    )
     with HybridIndexManifestStore(
         db or settings.index_db_path,
         vector_dir=vector_dir or settings.vector_dir,
-        embedding_model=embedding_model,
+        embeddings=embeddings,
+        embedding_model=model_version,
     ) as store:
         result = store.sync_document(
             doc_id=doc_id or pdf.name,
             source_path=pdf,
             document_bytes=pdf.read_bytes(),
             chunks=chunks,
-            embedding_model=embedding_model,
+            embedding_model=model_version,
         )
         batch = store.search_batch(result.manifest_id) if result.manifest_id else None
     payload = result.model_dump(mode="json")
@@ -259,23 +356,49 @@ def search_index(
     academic_year: str | None = typer.Option(None, "--year", "-y"),
     college: str | None = typer.Option(None, "--college"),
     doc_id: str | None = typer.Option(None, "--doc-id"),
-    embedding_model: str = typer.Option("scoreproof-hash-v1", "--embedding-model"),
+    embedding_backend: str = typer.Option("hash", "--embedding-backend"),
+    embedding_model: str | None = typer.Option(None, "--embedding-model"),
+    model_cache: Path | None = typer.Option(None, "--model-cache"),
+    rerank: bool = typer.Option(False, "--rerank", help="用 CrossEncoder 精排并与 RRF 排名融合"),
+    reranker_model: str = typer.Option("BAAI/bge-reranker-base", "--reranker-model"),
+    candidate_k: int = typer.Option(20, "--candidate-k", min=1),
+    base_rank_weight: float = typer.Option(4.0, "--base-rank-weight", min=0.001),
+    rerank_rank_weight: float = typer.Option(1.0, "--rerank-rank-weight", min=0.001),
     db: Path | None = typer.Option(None, "--db"),
     vector_dir: Path | None = typer.Option(None, "--vector-dir"),
 ) -> None:
     """查询活动 Manifest：BM25 与向量并行召回后用 RRF 融合。"""
     settings = get_settings()
+    embeddings, model_version = _embedding_provider(
+        backend=embedding_backend,
+        model_name=embedding_model,
+        cache_dir=model_cache or settings.model_cache_dir,
+    )
     with HybridIndexManifestStore(
         db or settings.index_db_path,
         vector_dir=vector_dir or settings.vector_dir,
-        embedding_model=embedding_model,
+        embeddings=embeddings,
+        embedding_model=model_version,
     ) as store:
-        hits = HybridRetriever(
+        retriever: Retriever = HybridRetriever(
             store,
             academic_year=academic_year,
             college=college,
             doc_id=doc_id,
-        ).search(query, top_k=top_k)
+            query_rewriter=rewrite_retrieval_query,
+        )
+        if rerank:
+            retriever = RerankingRetriever(
+                retriever,
+                FastEmbedReranker(
+                    model_name=reranker_model,
+                    cache_dir=model_cache or settings.model_cache_dir,
+                ),
+                candidate_k=candidate_k,
+                base_rank_weight=base_rank_weight,
+                rerank_rank_weight=rerank_rank_weight,
+            )
+        hits = retriever.search(query, top_k=top_k)
     payload = [
         {
             "id": hit.clause.id,
@@ -285,10 +408,91 @@ def search_index(
             "rank": hit.rank,
             "channel": hit.channel,
             "component_ranks": hit.component_ranks,
+            "rerank_score": hit.rerank_score,
         }
         for hit in hits
     ]
     console.print_json(json.dumps({"count": len(payload), "hits": payload}, ensure_ascii=False))
+
+
+@app.command("eval-retrieval")
+def eval_retrieval(
+    dataset: Path = typer.Argument(..., exists=True, dir_okay=False),
+    db: Path | None = typer.Option(None, "--db"),
+    vector_dir: Path | None = typer.Option(None, "--vector-dir"),
+    embedding_model: str = typer.Option("BAAI/bge-small-zh-v1.5", "--embedding-model"),
+    reranker_model: str = typer.Option("BAAI/bge-reranker-base", "--reranker-model"),
+    model_cache: Path | None = typer.Option(None, "--model-cache"),
+    candidate_k: int = typer.Option(20, "--candidate-k", min=1),
+    base_rank_weight: float = typer.Option(4.0, "--base-rank-weight", min=0.001),
+    rerank_rank_weight: float = typer.Option(1.0, "--rerank-rank-weight", min=0.001),
+    out: Path | None = typer.Option(None, "--out"),
+) -> None:
+    """在冻结集上复跑 A=BM25、B=向量+RRF、C=Rerank 三档消融。"""
+    settings = get_settings()
+    version, kind, cases = load_retrieval_cases(dataset)
+    embeddings = FastEmbedEmbeddings(
+        model_name=embedding_model,
+        cache_dir=model_cache or settings.model_cache_dir,
+    )
+    with HybridIndexManifestStore(
+        db or settings.index_db_path,
+        vector_dir=vector_dir or settings.vector_dir,
+        embeddings=embeddings,
+        embedding_model=embeddings.model_version,
+    ) as store:
+        hybrid = HybridRetriever(store, query_rewriter=rewrite_retrieval_query)
+        baseline = BM25Retriever(hybrid)
+        reranker = FastEmbedReranker(
+            model_name=reranker_model,
+            cache_dir=model_cache or settings.model_cache_dir,
+        )
+        reranked = RerankingRetriever(
+            hybrid,
+            reranker,
+            candidate_k=candidate_k,
+            base_rank_weight=base_rank_weight,
+            rerank_rank_weight=rerank_rank_weight,
+        )
+        reports = [
+            evaluate_retriever(baseline, cases, variant="A"),
+            evaluate_retriever(
+                hybrid,
+                cases,
+                variant="B",
+                embedding_count=lambda: embeddings.query_count,
+            ),
+            evaluate_retriever(
+                reranked,
+                cases,
+                variant="C",
+                embedding_count=lambda: embeddings.query_count,
+                rerank_pair_count=lambda: reranked.last_pair_count,
+            ),
+        ]
+        active_manifest_ids = [batch.manifest_id for batch in store.active_batches()]
+    report = build_ablation_report(
+        dataset_version=version,
+        dataset_kind=kind,
+        variants=reports,
+        notes=[
+            f"Embedding={embeddings.model_version}",
+            f"Reranker={reranker.model_version}",
+            (
+                f"Rerank rank fusion: base={base_rank_weight:g}, "
+                f"cross_encoder={rerank_rank_weight:g}, candidate_k={candidate_k}"
+            ),
+            "Query rewrite=scoreproof-default-v1 (BM25 only)",
+            f"Active manifests={','.join(active_manifest_ids)}",
+            "冻结集为基于真实公开细则人工整理的查询，不是生产用户日志。",
+        ],
+    )
+    payload = report.model_dump_json(indent=2)
+    if out:
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(payload, encoding="utf-8")
+        console.print(f"已写出：{out}")
+    console.print_json(payload)
 
 
 @app.command("rollback-index-manifest")

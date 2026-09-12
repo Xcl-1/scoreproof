@@ -3,9 +3,11 @@
 from .hybrid import (
     BM25IndexDocument,
     EmbeddingFunction,
+    FastEmbedEmbeddings,
     HashingEmbeddings,
     HybridIndexManifestStore,
     SearchIndexBatch,
+    make_embedding_provider,
 )
 from .manifest import (
     DocumentChunk,
@@ -21,6 +23,7 @@ __all__ = [
     "DocumentChunk",
     "BM25IndexDocument",
     "EmbeddingFunction",
+    "FastEmbedEmbeddings",
     "HashingEmbeddings",
     "HybridIndexManifestStore",
     "IndexManifestStore",
@@ -30,4 +33,5 @@ __all__ = [
     "SyncResult",
     "document_hash",
     "index_key",
+    "make_embedding_provider",
 ]

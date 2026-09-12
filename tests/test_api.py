@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import importlib
 import json
 from dataclasses import replace
 from pathlib import Path
@@ -150,7 +151,9 @@ class TestRetrievalEndpoints:
         body = client.post("/api/refusal-check", json={"claim": CLAIM_OK}).json()
         assert body["refused"] is False
 
-    def test_hybrid_search(self, client: TestClient) -> None:
+    def test_hybrid_search(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         settings = get_state().settings
         chunks = [
             DocumentChunk(
@@ -196,6 +199,32 @@ class TestRetrievalEndpoints:
         assert body["count"] == 2
         assert body["hits"][0]["id"] == "rules:page:2"
         assert body["hits"][0]["channel"] == "rrf"
+
+        class FakeReranker:
+            model_version = "fake"
+
+            def __init__(self, **kwargs) -> None:
+                pass
+
+            def score(self, query: str, documents: list[str]) -> list[float]:
+                return [float(-index) for index in range(len(documents))]
+
+        api_module = importlib.import_module("scoreproof.api.app")
+        monkeypatch.setattr(api_module, "FastEmbedReranker", FakeReranker)
+        reranked = client.post(
+            "/api/search",
+            json={
+                "query": "志愿服务",
+                "top_k": 2,
+                "academic_year": "2025-2026",
+                "college": "计算机学院",
+                "rerank": True,
+            },
+        )
+        assert reranked.status_code == 200
+        assert reranked.json()["hits"][0]["channel"] == "rerank"
+        assert reranked.json()["hits"][0]["rerank_score"] is not None
+        assert get_state().reranker_provider() is get_state().reranker_provider()
 
 
 class TestEvidence:

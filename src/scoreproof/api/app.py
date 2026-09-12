@@ -22,10 +22,12 @@ from .. import __version__
 from ..calc.engine import EngineConfig, compute_claims
 from ..config import get_settings
 from ..errors import ScoreProofError
-from ..indexing import HybridIndexManifestStore
+from ..indexing import EmbeddingFunction, HybridIndexManifestStore, make_embedding_provider
 from ..ingest.excel_loader import load_rules
 from ..retrieval.hybrid import HybridRetriever
-from ..retrieval.router import Router
+from ..retrieval.query import rewrite_retrieval_query
+from ..retrieval.rerank import FastEmbedReranker, RerankingRetriever
+from ..retrieval.router import Retriever, Router
 from ..rules.store import RuleStore
 from ..schema import Claim, Evidence, Ruleset
 
@@ -75,6 +77,7 @@ class SearchRequest(BaseModel):
     academic_year: str | None = None
     college: str | None = None
     doc_id: str | None = None
+    rerank: bool = False
 
 
 class EvidenceIn(BaseModel):
@@ -99,6 +102,10 @@ class AppState:
         self.ruleset: Ruleset = Ruleset()
         self.evidence: dict[str, Evidence] = {}
         self._store: RuleStore | None = None
+        self._embedding_cache: tuple[tuple[str, str | None, str], EmbeddingFunction, str] | None = (
+            None
+        )
+        self._reranker_cache: tuple[tuple[str, str], FastEmbedReranker] | None = None
 
     # ---------- 规则库 ----------
 
@@ -126,6 +133,34 @@ class AppState:
         if not self.ruleset.rules:
             self.load_ruleset()
         return self.ruleset
+
+    def embedding_provider(self) -> tuple[EmbeddingFunction, str]:
+        """按配置复用模型实例，避免每次 API 查询重新加载 ONNX 权重。"""
+        key = (
+            self.settings.embedding_backend,
+            self.settings.embedding_model,
+            str(self.settings.model_cache_dir),
+        )
+        if self._embedding_cache is None or self._embedding_cache[0] != key:
+            embeddings, version = make_embedding_provider(
+                backend=self.settings.embedding_backend,
+                model_name=self.settings.embedding_model,
+                cache_dir=self.settings.model_cache_dir,
+            )
+            self._embedding_cache = (key, embeddings, version)
+        return self._embedding_cache[1], self._embedding_cache[2]
+
+    def reranker_provider(self) -> FastEmbedReranker:
+        key = (self.settings.reranker_model, str(self.settings.model_cache_dir))
+        if self._reranker_cache is None or self._reranker_cache[0] != key:
+            self._reranker_cache = (
+                key,
+                FastEmbedReranker(
+                    model_name=self.settings.reranker_model,
+                    cache_dir=self.settings.model_cache_dir,
+                ),
+            )
+        return self._reranker_cache[1]
 
 
 state = AppState()
@@ -277,18 +312,31 @@ def create_app() -> FastAPI:
     @app.post("/api/search", tags=["retrieval"])
     def search(req: SearchRequest) -> dict:
         """查询活动混合索引；返回 RRF 排名及两路原始名次。"""
-        settings = get_state().settings
+        st = get_state()
+        settings = st.settings
+        embeddings, model_version = st.embedding_provider()
         with HybridIndexManifestStore(
             settings.index_db_path,
             vector_dir=settings.vector_dir,
-            embedding_model="scoreproof-hash-v1",
+            embeddings=embeddings,
+            embedding_model=model_version,
         ) as index:
-            hits = HybridRetriever(
+            retriever: Retriever = HybridRetriever(
                 index,
                 academic_year=req.academic_year,
                 college=req.college,
                 doc_id=req.doc_id,
-            ).search(req.query, top_k=req.top_k)
+                query_rewriter=rewrite_retrieval_query,
+            )
+            if req.rerank:
+                retriever = RerankingRetriever(
+                    retriever,
+                    st.reranker_provider(),
+                    candidate_k=settings.rerank_candidate_k,
+                    base_rank_weight=settings.rerank_base_weight,
+                    rerank_rank_weight=settings.rerank_model_weight,
+                )
+            hits = retriever.search(req.query, top_k=req.top_k)
         return {
             "count": len(hits),
             "hits": [
@@ -300,6 +348,7 @@ def create_app() -> FastAPI:
                     "rank": hit.rank,
                     "channel": hit.channel,
                     "component_ranks": hit.component_ranks,
+                    "rerank_score": hit.rerank_score,
                 }
                 for hit in hits
             ],

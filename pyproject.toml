@@ -47,6 +47,7 @@ retrieval = [
     "rank-bm25>=0.2.2",
     "chromadb>=0.5",
     "langchain-chroma>=1.0,<2",
+    "fastembed>=0.7,<1",
 ]
 # LLM 抽取（规则结构化 / 字段抽取）
 llm = [

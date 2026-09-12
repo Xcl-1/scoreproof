@@ -123,6 +123,71 @@ class HashingEmbeddings:
         return values
 
 
+class FastEmbedEmbeddings:
+    """FastEmbed/ONNX 的 LangChain 兼容适配器，查询使用模型专用 query 编码。"""
+
+    def __init__(
+        self,
+        *,
+        model_name: str = "BAAI/bge-small-zh-v1.5",
+        cache_dir: str | Path | None = None,
+        threads: int | None = None,
+    ) -> None:
+        self.model_name = model_name
+        self.cache_dir = Path(cache_dir) if cache_dir else None
+        self.threads = threads
+        self._model: Any | None = None
+        self.document_count = 0
+        self.query_count = 0
+
+    @property
+    def model_version(self) -> str:
+        return f"fastembed:{self.model_name}"
+
+    def embed_documents(self, texts: list[str]) -> list[list[float]]:
+        self.document_count += len(texts)
+        return [vector.tolist() for vector in self._load().embed(texts)]
+
+    def embed_query(self, text: str) -> list[float]:
+        self.query_count += 1
+        vectors = list(self._load().query_embed(text))
+        if len(vectors) != 1:  # pragma: no cover - FastEmbed 契约
+            raise ValueError("查询 Embedding 返回数量不为 1")
+        return vectors[0].tolist()
+
+    def _load(self):
+        if self._model is not None:
+            return self._model
+        try:
+            from fastembed import TextEmbedding
+        except ImportError as exc:  # pragma: no cover - 最小安装环境
+            raise RuntimeError("预训练 Embedding 不可用：请安装 scoreproof[retrieval]") from exc
+        if self.cache_dir:
+            self.cache_dir.mkdir(parents=True, exist_ok=True)
+        self._model = TextEmbedding(
+            model_name=self.model_name,
+            cache_dir=str(self.cache_dir) if self.cache_dir else None,
+            threads=self.threads,
+        )
+        return self._model
+
+
+def make_embedding_provider(
+    *, backend: str, model_name: str | None = None, cache_dir: str | Path | None = None
+) -> tuple[EmbeddingFunction, str]:
+    """按配置构建 Embedding，并返回必须写入 Manifest 的完整模型版本。"""
+    normalized = backend.strip().lower()
+    if normalized == "hash":
+        return HashingEmbeddings(), model_name or "scoreproof-hash-v1"
+    if normalized == "fastembed":
+        provider = FastEmbedEmbeddings(
+            model_name=model_name or "BAAI/bge-small-zh-v1.5",
+            cache_dir=cache_dir,
+        )
+        return provider, provider.model_version
+    raise ValueError("embedding backend 只支持 hash 或 fastembed")
+
+
 class HybridIndexManifestStore(IndexManifestStore):
     """先构建 BM25/Chroma 快照，再原子切换活动 Manifest 指针。"""
 
@@ -448,8 +513,10 @@ def _chroma_metadata(*, manifest_id: str, doc_id: str, chunk: StoredChunk) -> di
 __all__ = [
     "BM25IndexDocument",
     "EmbeddingFunction",
+    "FastEmbedEmbeddings",
     "HashingEmbeddings",
     "HybridIndexManifestStore",
     "SEARCH_INDEX_SCHEMA_SQL",
     "SearchIndexBatch",
+    "make_embedding_provider",
 ]

@@ -43,6 +43,27 @@ class Settings:
     vector_dir: Path = field(
         default_factory=lambda: Path(os.getenv("SCOREPROOF_VECTOR_DIR", "data/index/chroma"))
     )
+    model_cache_dir: Path = field(
+        default_factory=lambda: Path(os.getenv("SCOREPROOF_MODEL_CACHE", "data/models/fastembed"))
+    )
+    embedding_backend: str = field(
+        default_factory=lambda: os.getenv("SCOREPROOF_EMBEDDING_BACKEND", "hash")
+    )
+    embedding_model: str | None = field(
+        default_factory=lambda: os.getenv("SCOREPROOF_EMBEDDING_MODEL") or None
+    )
+    reranker_model: str = field(
+        default_factory=lambda: os.getenv("SCOREPROOF_RERANKER_MODEL", "BAAI/bge-reranker-base")
+    )
+    rerank_candidate_k: int = field(
+        default_factory=lambda: int(os.getenv("SCOREPROOF_RERANK_CANDIDATE_K", "20"))
+    )
+    rerank_base_weight: float = field(
+        default_factory=lambda: float(os.getenv("SCOREPROOF_RERANK_BASE_WEIGHT", "4"))
+    )
+    rerank_model_weight: float = field(
+        default_factory=lambda: float(os.getenv("SCOREPROOF_RERANK_MODEL_WEIGHT", "1"))
+    )
     log_level: str = field(default_factory=lambda: os.getenv("SCOREPROOF_LOG_LEVEL", "INFO"))
 
     llm_base_url: str = field(
@@ -78,7 +99,14 @@ class Settings:
         return bool(self.llm_api_key)
 
     def ensure_dirs(self) -> None:
-        for d in (self.raw_dir, self.rules_dir, self.eval_dir, self.index_db_path.parent, self.vector_dir):
+        for d in (
+            self.raw_dir,
+            self.rules_dir,
+            self.eval_dir,
+            self.index_db_path.parent,
+            self.vector_dir,
+            self.model_cache_dir,
+        ):
             d.mkdir(parents=True, exist_ok=True)
 
     def safe_repr(self) -> dict:
@@ -88,6 +116,13 @@ class Settings:
             "db_path": str(self.db_path),
             "index_db_path": str(self.index_db_path),
             "vector_dir": str(self.vector_dir),
+            "model_cache_dir": str(self.model_cache_dir),
+            "embedding_backend": self.embedding_backend,
+            "embedding_model": self.embedding_model,
+            "reranker_model": self.reranker_model,
+            "rerank_candidate_k": self.rerank_candidate_k,
+            "rerank_base_weight": self.rerank_base_weight,
+            "rerank_model_weight": self.rerank_model_weight,
             "llm_model": self.llm_model,
             "llm_base_url": self.llm_base_url,
             "llm_configured": self.llm_configured,

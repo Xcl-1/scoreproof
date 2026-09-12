@@ -49,8 +49,9 @@ class RetrievalHit:
     clause: Clause
     score: float
     rank: int = 0
-    channel: Literal["bm25", "vector", "rrf"] | None = None
+    channel: Literal["bm25", "vector", "rrf", "rerank"] | None = None
     component_ranks: dict[str, int] = field(default_factory=dict)
+    rerank_score: float | None = None
 
 
 class Retriever(Protocol):

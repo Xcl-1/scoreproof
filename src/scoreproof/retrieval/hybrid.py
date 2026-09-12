@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 
 from ..indexing.hybrid import BM25IndexDocument, HybridIndexManifestStore
 from ..schema import SourceRef
@@ -64,6 +64,7 @@ class HybridRetriever:
         rrf_k: int = 60,
         bm25_weight: float = 1.0,
         vector_weight: float = 1.0,
+        query_rewriter: Callable[[str], str] | None = None,
     ) -> None:
         if bm25_weight <= 0 or vector_weight <= 0:
             raise ValueError("召回权重必须大于 0")
@@ -74,6 +75,7 @@ class HybridRetriever:
         self.rrf_k = rrf_k
         self.bm25_weight = bm25_weight
         self.vector_weight = vector_weight
+        self.query_rewriter = query_rewriter
 
     def available(self) -> bool:
         return bool(self.store.active_batches(doc_id=self.doc_id))
@@ -97,7 +99,8 @@ class HybridRetriever:
             for document in self.store.active_bm25_documents(doc_id=self.doc_id)
             if self._eligible(document.metadata)
         ]
-        tokens = tokenize_for_search(query)
+        lexical_query = self.query_rewriter(query) if self.query_rewriter else query
+        tokens = tokenize_for_search(lexical_query)
         if not documents or not tokens:
             return []
         try:
@@ -175,6 +178,19 @@ class HybridRetriever:
         return not (self.college and college and college != self.college)
 
 
+class BM25Retriever:
+    """消融实验 A 档：复用同一活动批次，但只启用 BM25。"""
+
+    def __init__(self, hybrid: HybridRetriever) -> None:
+        self.hybrid = hybrid
+
+    def available(self) -> bool:
+        return self.hybrid.available()
+
+    def search(self, query: str, *, top_k: int = 5) -> list[RetrievalHit]:
+        return self.hybrid.search_bm25(query, top_k=top_k)
+
+
 def _bm25_clause(document: BM25IndexDocument) -> Clause:
     return Clause(
         id=_clause_id(document),
@@ -201,4 +217,4 @@ def _optional_text(value: object) -> str | None:
     return str(value) if value not in (None, "") else None
 
 
-__all__ = ["HybridRetriever", "reciprocal_rank_fusion"]
+__all__ = ["BM25Retriever", "HybridRetriever", "reciprocal_rank_fusion"]

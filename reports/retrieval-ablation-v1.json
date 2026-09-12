@@ -1,0 +1,105 @@
+{
+  "dataset_version": "fzu-ccds-retrieval-test-v2",
+  "dataset_kind": "held-out test queries over one real public policy PDF; created after configuration freeze; not production user logs",
+  "variants": [
+    {
+      "variant": "A",
+      "sample_size": 100,
+      "hit_at_5": {
+        "value": 0.96,
+        "ci95_low": 0.901629,
+        "ci95_high": 0.984337
+      },
+      "mrr_at_10": {
+        "value": 0.863024,
+        "ci95_low": 0.807238,
+        "ci95_high": 0.917429
+      },
+      "ndcg_at_10": {
+        "value": 0.730665,
+        "ci95_low": 0.678178,
+        "ci95_high": 0.782267
+      },
+      "latency_p50_ms": 6.145,
+      "latency_p95_ms": 8.333,
+      "embedding_query_count": 0,
+      "rerank_pair_count": 0,
+      "failures": [
+        "english-test-v2-08",
+        "paper-test-v2-01",
+        "overall-test-v2-09",
+        "paper-normalization-v2-10"
+      ]
+    },
+    {
+      "variant": "B",
+      "sample_size": 100,
+      "hit_at_5": {
+        "value": 0.98,
+        "ci95_low": 0.929988,
+        "ci95_high": 0.994498
+      },
+      "mrr_at_10": {
+        "value": 0.915333,
+        "ci95_low": 0.867333,
+        "ci95_high": 0.954167
+      },
+      "ndcg_at_10": {
+        "value": 0.778092,
+        "ci95_low": 0.727192,
+        "ci95_high": 0.826807
+      },
+      "latency_p50_ms": 31.741,
+      "latency_p95_ms": 35.173,
+      "embedding_query_count": 100,
+      "rerank_pair_count": 0,
+      "failures": [
+        "paper-test-v2-01",
+        "overall-test-v2-09"
+      ]
+    },
+    {
+      "variant": "C",
+      "sample_size": 100,
+      "hit_at_5": {
+        "value": 0.98,
+        "ci95_low": 0.929988,
+        "ci95_high": 0.994498
+      },
+      "mrr_at_10": {
+        "value": 0.915333,
+        "ci95_low": 0.867667,
+        "ci95_high": 0.9545
+      },
+      "ndcg_at_10": {
+        "value": 0.778428,
+        "ci95_low": 0.727514,
+        "ci95_high": 0.827817
+      },
+      "latency_p50_ms": 1058.102,
+      "latency_p95_ms": 1139.342,
+      "embedding_query_count": 100,
+      "rerank_pair_count": 2000,
+      "failures": [
+        "paper-test-v2-01",
+        "overall-test-v2-09"
+      ]
+    }
+  ],
+  "deltas": {
+    "hit_at_5_B_minus_A": 0.02,
+    "hit_at_5_C_minus_B": 0.0,
+    "mrr_at_10_B_minus_A": 0.052309,
+    "mrr_at_10_C_minus_B": 0.0,
+    "ndcg_at_10_B_minus_A": 0.047427,
+    "ndcg_at_10_C_minus_B": 0.000336
+  },
+  "notes": [
+    "Embedding=fastembed:BAAI/bge-small-zh-v1.5",
+    "Reranker=fastembed:BAAI/bge-reranker-base",
+    "Rerank rank fusion: base=4, cross_encoder=1, candidate_k=20",
+    "Query rewrite=scoreproof-default-v1 (BM25 only)",
+    "Active manifests=im_ebb186aa0a174e30",
+    "冻结集为基于真实公开细则人工整理的查询，不是生产用户日志。"
+  ]
+}

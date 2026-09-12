@@ -1,0 +1,67 @@
+{
+  "dataset_version": "fzu-ccds-retrieval-validation-v1",
+  "dataset_kind": "validation queries over one real public policy PDF; used to freeze rerank configuration; not production user logs",
+  "source_document": "fzu_ccds_2026_recommendation_score_rules.pdf",
+  "groups": [
+    {
+      "id": "english-requirement",
+      "intent": "英语成绩要求",
+      "relevant_ids": ["fzu-ccds-2026-rules:page:2:block:1", "fzu-ccds-2026-rules:page:2:block:2", "fzu-ccds-2026-rules:page:2:block:3"],
+      "queries": ["推免英语要多少分", "校内四级要达到几分", "英语四级480分可以吗", "六级过线能满足推免要求吗", "计算机学院保研英语门槛", "我四级考了480能申请推免吗", "校内大学英语四级75分够不够", "推免生英语考试成绩条件", "四六级成绩有什么要求", "英语没到75是否符合资格"]
+    },
+    {
+      "id": "challenge-cup",
+      "intent": "创新大赛和挑战杯资格认定",
+      "relevant_ids": ["fzu-ccds-2026-rules:page:2:block:4", "fzu-ccds-2026-rules:page:2:block:5", "fzu-ccds-2026-rules:page:2:block:6", "fzu-ccds-2026-rules:page:2:block:7"],
+      "queries": ["挑战杯获奖怎么认定推免资格", "大创比赛能不能用于保研", "中国国际大学生创新大赛的认定规则", "挑战杯创业计划竞赛是否算资格", "参加挑战杯可以申请推免吗", "创新大赛获奖的推免政策", "哪些大学生竞赛可以认定推免资格", "课外学术科技作品竞赛怎么认定", "创业计划大赛和推免有什么关系", "福州大学高水平竞赛认定办法"]
+    },
+    {
+      "id": "paper-eligibility",
+      "intent": "高水平论文资格",
+      "relevant_ids": ["fzu-ccds-2026-rules:page:2:block:11", "fzu-ccds-2026-rules:page:2:block:12", "fzu-ccds-2026-rules:page:2:block:13", "fzu-ccds-2026-rules:page:2:block:14", "fzu-ccds-2026-rules:page:2:block:15", "fzu-ccds-2026-rules:page:2:block:16", "fzu-ccds-2026-rules:page:2:block:17", "fzu-ccds-2026-rules:page:2:block:18"],
+      "queries": ["发表论文满足什么条件可以推免", "导师一作学生二作算不算", "SCI二区论文是否符合特殊学术专长", "CCF A类会议论文能申请吗", "本科生独立作者论文要求", "指导老师第一作者学生第二作者可以吗", "什么级别的学术论文才被认可", "论文作者排序有什么规定", "高水平科研论文的推免条件", "中科院二区文章能否作为支撑材料"]
+    },
+    {
+      "id": "overall-formula",
+      "intent": "综合测评总成绩构成",
+      "relevant_ids": ["fzu-ccds-2026-rules:page:3:block:9", "fzu-ccds-2026-rules:page:3:block:10", "fzu-ccds-2026-rules:page:3:block:11", "fzu-ccds-2026-rules:page:3:block:12", "fzu-ccds-2026-rules:page:3:block:13", "fzu-ccds-2026-rules:page:3:block:14", "fzu-ccds-2026-rules:page:3:block:15", "fzu-ccds-2026-rules:page:3:block:16", "fzu-ccds-2026-rules:page:3:block:17", "fzu-ccds-2026-rules:page:3:block:18"],
+      "queries": ["综合测评成绩怎么算", "学业成绩和竞赛成绩各占多少", "推免综合分计算公式", "科研成果占综合测评几个点", "德育在总成绩中的权重", "志愿服务成绩占比是多少", "学业综合成绩占百分之多少", "论文和知识产权分别占多少", "综合素质测评由哪些部分构成", "保研最终综合成绩的权重公式"]
+    },
+    {
+      "id": "competition-formula",
+      "intent": "学科竞赛百分制换算",
+      "relevant_ids": ["fzu-ccds-2026-rules:page:3:block:20", "fzu-ccds-2026-rules:page:3:block:21"],
+      "queries": ["学科竞赛成绩如何换算成百分制", "竞赛原始分的计算公式", "基础分60怎么计算竞赛成绩", "竞赛最高分如何参与归一化", "我的竞赛分怎样折算", "学科竞赛成绩百分制公式", "竞赛原始分和专业最高值怎么算", "保研竞赛成绩计算方法", "竞赛成绩是不是加60再除最高分", "学科竞赛归一化规则"]
+    },
+    {
+      "id": "paper-formula",
+      "intent": "论文百分制换算",
+      "relevant_ids": ["fzu-ccds-2026-rules:page:3:block:22", "fzu-ccds-2026-rules:page:3:block:23"],
+      "queries": ["发表论文成绩怎么算", "论文原始分如何换算百分制", "论文成绩基础分是多少", "论文最高原始分怎么进入公式", "保研论文成绩计算方法", "发表文章得分如何归一化", "论文分也是先加60吗", "科研论文百分制换算公式", "我的论文原始分怎样折算", "专业论文最高分对个人成绩的影响"]
+    },
+    {
+      "id": "volunteer-formula",
+      "intent": "志愿服务百分制换算",
+      "relevant_ids": ["fzu-ccds-2026-rules:page:3:block:26", "fzu-ccds-2026-rules:page:3:block:27"],
+      "queries": ["志愿服务成绩怎么换算", "志愿时长得分如何变成百分制", "志愿服务也有60分基础分吗", "志愿服务专业最高值怎么用", "参加志愿活动的综合成绩公式", "志愿服务成绩归一化方法", "保研志愿服务分怎么算", "我的志愿服务成绩如何折算", "志愿服务百分制计算公式", "志愿服务最高成绩会影响别人吗"]
+    },
+    {
+      "id": "international-internship",
+      "intent": "国际组织实习换算",
+      "relevant_ids": ["fzu-ccds-2026-rules:page:4:block:1", "fzu-ccds-2026-rules:page:4:block:2"],
+      "queries": ["国际组织实习成绩怎么算", "到国际组织实习如何折算百分制", "国际组织实习基础分是60吗", "实习成绩最高值怎么进入公式", "国际组织项目对推免综合分的计算", "国际组织实习归一化方法", "海外组织实习成绩计算规则", "保研国际组织实习分怎么算", "国际实习百分制换算公式", "有关国际组织实习的成绩条款"]
+    },
+    {
+      "id": "competition-scoring",
+      "intent": "竞赛原始分与团队系数",
+      "relevant_ids": ["fzu-ccds-2026-rules:page:5:block:2", "fzu-ccds-2026-rules:page:5:block:3", "fzu-ccds-2026-rules:page:5:block:17", "fzu-ccds-2026-rules:page:5:block:18", "fzu-ccds-2026-rules:page:5:block:19", "fzu-ccds-2026-rules:page:5:block:20", "fzu-ccds-2026-rules:page:5:block:21", "fzu-ccds-2026-rules:page:5:block:22", "fzu-ccds-2026-rules:page:5:block:23", "fzu-ccds-2026-rules:page:5:block:24", "fzu-ccds-2026-rules:page:5:block:25", "fzu-ccds-2026-rules:page:5:block:26", "fzu-ccds-2026-rules:page:5:block:27", "fzu-ccds-2026-rules:page:5:block:28", "fzu-ccds-2026-rules:page:5:block:29", "fzu-ccds-2026-rules:page:5:block:30", "fzu-ccds-2026-rules:page:5:block:31", "fzu-ccds-2026-rules:page:5:block:32", "fzu-ccds-2026-rules:page:5:block:33", "fzu-ccds-2026-rules:page:5:block:34", "fzu-ccds-2026-rules:page:5:block:35", "fzu-ccds-2026-rules:page:5:block:36", "fzu-ccds-2026-rules:page:5:block:37"],
+      "queries": ["学科竞赛原始分标准在哪里", "同一项目多个奖项怎么取分", "团队竞赛前三名如何折算", "竞赛第四名乘什么系数", "集体项目排名系数是多少", "竞赛只取最高奖吗", "团队奖第一第二第三分别怎么计算", "竞赛得分取整还是四舍五入", "竞赛原始分的小数如何处理", "学科竞赛加分评定标准"]
+    },
+    {
+      "id": "patent-scoring",
+      "intent": "知识产权专利原始分",
+      "relevant_ids": ["fzu-ccds-2026-rules:page:6:block:12", "fzu-ccds-2026-rules:page:6:block:13", "fzu-ccds-2026-rules:page:6:block:14", "fzu-ccds-2026-rules:page:6:block:15", "fzu-ccds-2026-rules:page:6:block:16", "fzu-ccds-2026-rules:page:6:block:17"],
+      "queries": ["第一专利人知识产权如何加分", "发明专利第一专利人得几分", "实用新型专利可以加多少", "外观专利原始分是多少", "专利转让第一专利人怎么计分", "我有一个发明专利能加几分", "第一专利人的专利加分标准", "知识产权原始分评定规则", "不同类型专利分别多少分", "专利转让和发明专利分值一样吗"]
+    }
+  ]
+}

@@ -1,0 +1,78 @@
+{
+  "dataset_version": "fzu-ccds-retrieval-test-v2",
+  "dataset_kind": "held-out test queries over one real public policy PDF; created after configuration freeze; not production user logs",
+  "source_document": "fzu_ccds_2026_recommendation_score_rules.pdf",
+  "groups": [
+    {
+      "id": "english-test-v2",
+      "intent": "英语成绩要求",
+      "relevant_ids": ["fzu-ccds-2026-rules:page:2:block:1", "fzu-ccds-2026-rules:page:2:block:2", "fzu-ccds-2026-rules:page:2:block:3"],
+      "queries": ["保研资格审查要求校内英语考到多少", "国家大学英语四级最低认可成绩是多少", "已经过六级是否还要四级达到四百八", "校英语四级七十四分能通过审核吗", "四级正好四百八十分是否符合规定", "教育部规定的六级合格线能作为依据吗", "申请推荐免试时英语成绩看国考还是校考", "学院认定外语条件有哪些可选方式", "CET-4分数不到480还能用CET-6证明吗", "英语考试成绩满足哪一条即可获得推免资格"]
+    },
+    {
+      "id": "innovation-test-v2",
+      "intent": "创新大赛和挑战杯资格认定",
+      "relevant_ids": ["fzu-ccds-2026-rules:page:2:block:4", "fzu-ccds-2026-rules:page:2:block:5", "fzu-ccds-2026-rules:page:2:block:6", "fzu-ccds-2026-rules:page:2:block:7"],
+      "queries": ["国创赛获奖的推免资格依据哪份奖励办法", "挑战杯全国课外学术科技作品赛是否在范围内", "中国大学生创业计划竞赛怎么做资格认定", "三类高水平科创竞赛按什么校级文件审核", "已经进入学院推荐指标还会预留竞赛名额吗", "创新大赛排位在指标内如何处理", "挑战杯获奖是否直接占用额外推免指标", "科创竞赛的资格认定参照哪个福大文件", "课外学术科技作品获奖材料按何规则审查", "学院对国创和两类挑战杯采用什么统一口径"]
+    },
+    {
+      "id": "paper-test-v2",
+      "intent": "高水平论文资格",
+      "relevant_ids": ["fzu-ccds-2026-rules:page:2:block:11", "fzu-ccds-2026-rules:page:2:block:12", "fzu-ccds-2026-rules:page:2:block:13", "fzu-ccds-2026-rules:page:2:block:14", "fzu-ccds-2026-rules:page:2:block:15", "fzu-ccds-2026-rules:page:2:block:16", "fzu-ccds-2026-rules:page:2:block:17", "fzu-ccds-2026-rules:page:2:block:18"],
+      "queries": ["特殊学术专长对论文检索等级有什么明确限制", "中科院二区SCI且学生一作符合基本条件吗", "指导教师一作本科生二作时还需要什么证明", "导师推荐信应说明学生在联合成果中的哪些贡献", "CCF A类期刊成果能否满足学术专长门槛", "与本学科学业无关的高水平论文会被认可吗", "与职称明显高于本人者合作的成果如何计入", "直系亲属合作论文能否进入综合评价计算", "学院为何会对争议较大的刊物从严审核", "学术专长申请认可哪些作者排序和论文级别"]
+    },
+    {
+      "id": "overall-test-v2",
+      "intent": "综合测评总成绩构成",
+      "relevant_ids": ["fzu-ccds-2026-rules:page:3:block:9", "fzu-ccds-2026-rules:page:3:block:10", "fzu-ccds-2026-rules:page:3:block:11", "fzu-ccds-2026-rules:page:3:block:12", "fzu-ccds-2026-rules:page:3:block:13", "fzu-ccds-2026-rules:page:3:block:14", "fzu-ccds-2026-rules:page:3:block:15", "fzu-ccds-2026-rules:page:3:block:16", "fzu-ccds-2026-rules:page:3:block:17", "fzu-ccds-2026-rules:page:3:block:18"],
+      "queries": ["学业综合与综合素质在测评里分别占九成和一成吗", "科研成果和学科竞赛合计占综合分多少", "综合素质中其余项目的三个百分点怎么拆分", "论文成绩在最终公式里乘百分之几", "知识产权项目对综合测评贡献两个百分点吗", "志愿服务参军和国际实习各自权重是多少", "德育成绩在最终推荐分中乘什么比例", "综合测评涉及的所有百分制子成绩有哪些", "学院计算保研排名时采用的完整加权表达式", "学科竞赛三论文二专利二的权重说法是否正确"]
+    },
+    {
+      "id": "competition-normalization-v2",
+      "intent": "学科竞赛百分制换算",
+      "relevant_ids": ["fzu-ccds-2026-rules:page:3:block:20", "fzu-ccds-2026-rules:page:3:block:21"],
+      "queries": ["被推荐学生的竞赛原始分如何除以专业最高值", "竞赛成绩的六十分基础项同时出现在分子分母吗", "本专业入围者竞赛最高原始分是归一化基准吗", "某同学竞赛原始分为零时标准成绩怎样代公式", "竞赛百分制换算是否采用六十加个人分再相除", "专业最高原始分对应的竞赛成绩是不是一百", "求学科竞赛成绩需要哪两个原始分数据", "学院细则中的竞赛成绩换算分式是什么", "个人与专业最高竞赛原始分如何形成比例", "推荐名单中的竞赛项怎样统一到百分制"]
+    },
+    {
+      "id": "paper-normalization-v2",
+      "intent": "论文百分制换算",
+      "relevant_ids": ["fzu-ccds-2026-rules:page:3:block:22", "fzu-ccds-2026-rules:page:3:block:23"],
+      "queries": ["被推荐学生论文原始分怎样除以专业最高论文分", "发表论文成绩的基础分固定为六十吗", "论文百分制分式的分子需要加什么", "专业入围学生论文最高原始分放在分母哪里", "论文原始成绩为零时换算式仍有基础分吗", "最高论文原始分的学生折算结果是否为一百", "算发表论文标准成绩要收集哪些数值", "细则规定的论文成绩百分制公式是什么", "个人论文分与本专业最高分如何比较", "科研论文模块进入加权前怎样标准化"]
+    },
+    {
+      "id": "volunteer-normalization-v2",
+      "intent": "志愿服务百分制换算",
+      "relevant_ids": ["fzu-ccds-2026-rules:page:3:block:26", "fzu-ccds-2026-rules:page:3:block:27"],
+      "queries": ["参加志愿服务的成绩怎样按专业最高成绩归一", "志愿项分子是否为六十加个人服务成绩", "志愿服务最高值在换算分母中如何体现", "个人没有志愿加分时怎样套用百分制公式", "志愿服务最高者折算后会得到一百分吗", "计算志愿服务标准成绩需要专业内什么数据", "推免综合测评先怎样处理志愿服务原始成绩", "参加志愿服务成绩的完整分式在哪里", "六十基础分对志愿服务换算有什么影响", "个人志愿成绩与入围者最高成绩如何做比例"]
+    },
+    {
+      "id": "internship-normalization-v2",
+      "intent": "国际组织实习换算",
+      "relevant_ids": ["fzu-ccds-2026-rules:page:4:block:1", "fzu-ccds-2026-rules:page:4:block:2"],
+      "queries": ["到国际组织实习所得成绩如何按专业最高值转换", "国际组织实习公式也使用六十分基础分吗", "实习标准分的分子是个人成绩加六十吗", "专业推免入围者国际实习最高成绩怎样作分母", "没有国际组织实习成绩时公式如何代入", "国际实习最高成绩者换算后能否得到一百分", "核算国际组织实习模块需要个人值和哪个最高值", "细则第四页的国际组织实习分式怎么写", "实习原始成绩在计入百分之零点三前如何处理", "被推荐学生国际组织实习成绩如何变为百分制"]
+    },
+    {
+      "id": "competition-points-v2",
+      "intent": "竞赛原始分与团队系数",
+      "relevant_ids": ["fzu-ccds-2026-rules:page:5:block:2", "fzu-ccds-2026-rules:page:5:block:3", "fzu-ccds-2026-rules:page:5:block:17", "fzu-ccds-2026-rules:page:5:block:18", "fzu-ccds-2026-rules:page:5:block:19", "fzu-ccds-2026-rules:page:5:block:20", "fzu-ccds-2026-rules:page:5:block:21", "fzu-ccds-2026-rules:page:5:block:22", "fzu-ccds-2026-rules:page:5:block:23", "fzu-ccds-2026-rules:page:5:block:24", "fzu-ccds-2026-rules:page:5:block:25", "fzu-ccds-2026-rules:page:5:block:26", "fzu-ccds-2026-rules:page:5:block:27", "fzu-ccds-2026-rules:page:5:block:28", "fzu-ccds-2026-rules:page:5:block:29", "fzu-ccds-2026-rules:page:5:block:30", "fzu-ccds-2026-rules:page:5:block:31", "fzu-ccds-2026-rules:page:5:block:32", "fzu-ccds-2026-rules:page:5:block:33", "fzu-ccds-2026-rules:page:5:block:34", "fzu-ccds-2026-rules:page:5:block:35", "fzu-ccds-2026-rules:page:5:block:36", "fzu-ccds-2026-rules:page:5:block:37"],
+      "queries": [
+        {"text": "国际级个人特等奖和集体特等奖各记几分", "relevant_ids": ["fzu-ccds-2026-rules:page:5:block:21"]},
+        {"text": "国家级一等奖个人项目与集体项目分值差多少", "relevant_ids": ["fzu-ccds-2026-rules:page:5:block:26"]},
+        {"text": "省部级二等奖或单项奖的原始分是多少", "relevant_ids": ["fzu-ccds-2026-rules:page:5:block:32"]},
+        {"text": "校级一等奖个人和团队分别能取得多少原始分", "relevant_ids": ["fzu-ccds-2026-rules:page:5:block:36"]},
+        {"text": "同一竞赛项目获两个奖为什么只取最高奖", "relevant_ids": ["fzu-ccds-2026-rules:page:5:block:3"]},
+        {"text": "团队前三名为何分别按一零点七五零点五折算", "relevant_ids": ["fzu-ccds-2026-rules:page:5:block:3"]},
+        {"text": "集体项目第四位成员应乘零点二五系数吗", "relevant_ids": ["fzu-ccds-2026-rules:page:5:block:3"]},
+        {"text": "竞赛折算结果的小数为什么不做四舍五入", "relevant_ids": ["fzu-ccds-2026-rules:page:5:block:3"]},
+        {"text": "零点一到零点四的团队计算结果最后记多少", "relevant_ids": ["fzu-ccds-2026-rules:page:5:block:3"]},
+        {"text": "竞赛原始分保留到半分的具体取整规则", "relevant_ids": ["fzu-ccds-2026-rules:page:5:block:3"]}
+      ]
+    },
+    {
+      "id": "patent-points-v2",
+      "intent": "知识产权专利原始分",
+      "relevant_ids": ["fzu-ccds-2026-rules:page:6:block:12", "fzu-ccds-2026-rules:page:6:block:13", "fzu-ccds-2026-rules:page:6:block:14", "fzu-ccds-2026-rules:page:6:block:15", "fzu-ccds-2026-rules:page:6:block:16", "fzu-ccds-2026-rules:page:6:block:17"],
+      "queries": ["第一专利人的发明专利原始分是五分吗", "首位实用新型专利人可以取得三分吗", "第一专利人拥有外观专利按两分计算吗", "专利完成转让且排第一能记多少分", "四种知识产权条目中哪些对应五分", "发明专利和专利转让的首位人员分值相同吗", "实用新型与外观设计相差多少原始分", "学院知识产权评分表只认可第一专利人吗", "想查询发明实用新型外观及转让的分值表", "专利类型和第一专利人身份怎样共同决定原始分"]
+    }
+  ]
+}

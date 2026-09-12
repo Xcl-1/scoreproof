@@ -8,7 +8,7 @@ import pytest
 from langchain_core.embeddings import Embeddings
 from typer.testing import CliRunner
 
-from scoreproof.cli import app
+from scoreproof.cli import _pdf_index_chunks, app
 from scoreproof.indexing import (
     DocumentChunk,
     HashingEmbeddings,
@@ -17,6 +17,7 @@ from scoreproof.indexing import (
 )
 from scoreproof.ingest.pdf_loader import PDFPage
 from scoreproof.retrieval import HybridRetriever, RetrievalHit, Router, reciprocal_rank_fusion
+from scoreproof.retrieval.query import rewrite_retrieval_query
 from scoreproof.retrieval.router import Clause
 from scoreproof.schema import Ruleset, SourceRef
 
@@ -185,6 +186,25 @@ def test_hybrid_retriever_runs_both_channels_and_rrf(tmp_path: Path) -> None:
         assert fused[0].component_ranks == {"bm25": 1, "vector": 1}
 
 
+def test_query_rewrite_is_applied_only_to_bm25_channel(tmp_path: Path) -> None:
+    chunks = [
+        DocumentChunk(
+            logical_key=f"page:{index}",
+            text=text,
+            kind="page",
+            source=SourceRef(doc="rules.pdf", page=index),
+        )
+        for index, text in enumerate(
+            ["推免资格审查办法", "学科竞赛评分办法", "志愿服务认定办法", "知识产权计分办法"],
+            start=1,
+        )
+    ]
+    with _store(tmp_path) as store:
+        _sync(store, chunks)
+        retriever = HybridRetriever(store, query_rewriter=rewrite_retrieval_query)
+        assert retriever.search_bm25("免试研究生")[0].clause.id == "rules:page:1"
+
+
 def test_hybrid_filter_excludes_other_college(tmp_path: Path) -> None:
     with _store(tmp_path) as store:
         _sync(store, _chunks(college="计算机学院"))
@@ -339,3 +359,51 @@ def test_hybrid_sync_and_search_cli(tmp_path: Path, monkeypatch: pytest.MonkeyPa
     )
     assert search_result.exit_code == 0, search_result.output
     assert "rules:page:2" in search_result.output
+
+    class FakeReranker:
+        model_version = "fake"
+
+        def __init__(self, **kwargs) -> None:
+            pass
+
+        def score(self, query: str, documents: list[str]) -> list[float]:
+            return [float(-index) for index in range(len(documents))]
+
+    monkeypatch.setattr("scoreproof.cli.FastEmbedReranker", FakeReranker)
+    rerank_result = runner.invoke(
+        app,
+        [
+            "search-index",
+            "志愿服务",
+            "--rerank",
+            "--db",
+            str(db),
+            "--vector-dir",
+            str(vectors),
+        ],
+    )
+    assert rerank_result.exit_code == 0, rerank_result.output
+    assert '"channel": "rerank"' in rerank_result.output
+
+
+def test_pdf_table_level_is_prefixed_to_following_rows(tmp_path: Path) -> None:
+    page = PDFPage(
+        page=5,
+        text="国家级\n一等奖 4分 3分\n二等奖 3分 2分",
+        blocks=[
+            {"text": "国家级", "bbox": (0, 0, 1, 1)},
+            {"text": "一等奖 4分 3分", "bbox": (0, 1, 1, 2)},
+            {"text": "二等奖 3分 2分", "bbox": (0, 2, 1, 3)},
+        ],
+        meta={"doc": "rules.pdf"},
+    )
+    chunks = _pdf_index_chunks(
+        pdf=tmp_path / "rules.pdf",
+        pages=[page],
+        chunk_mode="block",
+        academic_year="2025-2026",
+        college="计算机学院",
+    )
+    assert chunks[1].text == "国家级\n一等奖 4分 3分"
+    assert chunks[1].source.text == "一等奖 4分 3分"
+    assert chunks[1].metadata["original_text"] == "一等奖 4分 3分"
