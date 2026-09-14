@@ -80,6 +80,15 @@ class SearchRequest(BaseModel):
     rerank: bool = False
 
 
+class AgentRequest(BaseModel):
+    query: str = Field(min_length=1)
+    session_id: str | None = None
+    claims: list[ClaimIn] = Field(default_factory=list)
+    academic_year: str | None = None
+    college: str | None = None
+    use_model: bool = True
+
+
 class EvidenceIn(BaseModel):
     evidence: Evidence
 
@@ -106,6 +115,7 @@ class AppState:
             None
         )
         self._reranker_cache: tuple[tuple[str, str], FastEmbedReranker] | None = None
+        self._agent_sessions: Any = None
 
     # ---------- 规则库 ----------
 
@@ -161,6 +171,13 @@ class AppState:
                 ),
             )
         return self._reranker_cache[1]
+
+    def agent_sessions(self) -> Any:
+        if self._agent_sessions is None:
+            from ..agent import SessionRuleLock
+
+            self._agent_sessions = SessionRuleLock()
+        return self._agent_sessions
 
 
 state = AppState()
@@ -353,6 +370,65 @@ def create_app() -> FastAPI:
                 for hit in hits
             ],
         }
+
+    # ---------------- 工具编排 ----------------
+
+    @app.post("/api/agent", tags=["agent"])
+    def agent(req: AgentRequest) -> dict:
+        """LangChain 工具路由；模型不可用时自动回退到确定性查表与核算。"""
+        from ..agent import OrchestrationRequest, ScoreProofOrchestrator
+        from ..agent.orchestrator import make_deepseek_model
+
+        st = get_state()
+        settings = st.settings
+        model = None
+        if req.use_model and settings.llm_configured:
+            assert settings.llm_api_key is not None
+            try:
+                model = make_deepseek_model(
+                    model=settings.llm_model,
+                    api_key=settings.llm_api_key,
+                    base_url=settings.llm_base_url,
+                )
+            except Exception:
+                model = None
+
+        def clause_searcher(query: str, filters: dict[str, Any], top_k: int) -> list:
+            embeddings, model_version = st.embedding_provider()
+            with HybridIndexManifestStore(
+                settings.index_db_path,
+                vector_dir=settings.vector_dir,
+                embeddings=embeddings,
+                embedding_model=model_version,
+            ) as index:
+                return HybridRetriever(
+                    index,
+                    academic_year=filters.get("academic_year"),
+                    college=filters.get("college"),
+                    doc_id=filters.get("doc_id"),
+                    query_rewriter=rewrite_retrieval_query,
+                ).search(query, top_k=top_k)
+
+        audit_store = RuleStore(settings.db_path)
+        try:
+            request = OrchestrationRequest(
+                query=req.query,
+                **({"session_id": req.session_id} if req.session_id else {}),
+                claims=[item.to_claim() for item in req.claims],
+                academic_year=req.academic_year,
+                college=req.college,
+            )
+            result = ScoreProofOrchestrator(
+                st.ensure_rules(),
+                model=model,
+                model_version=settings.llm_model if model is not None else "rules-only",
+                audit_sink=audit_store,
+                clause_searcher=clause_searcher,
+                sessions=st.agent_sessions(),
+            ).run(request)
+            return result.model_dump(mode="json")
+        finally:
+            audit_store.close()
 
     # ---------------- 证据 / 多模态（P2 入口） ----------------
 

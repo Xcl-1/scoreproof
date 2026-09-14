@@ -14,7 +14,8 @@
 
 1. **异构文档 → 结构化规则库**：不是问答，是把非结构化规则变成可执行规则（带学年/学院/版本/出处）。
 2. **双通道检索 + 确定性计算**：结构化查表优先 → 原文检索兜底 → 未命中**拒答**（不瞎给分）。
-3. **多模态材料核对**（P2）：图片抽字段（字段级置信度 + 人工校对闭环）、pHash + 字段指纹查重、申报与证据一致性比对。
+3. **LangChain 工具编排 + 代码级护栏**：五个 `@tool` 通过 `bind_tools` 暴露；空结果强制澄清，账本外数字强制拦截，模型不可用仍可查表算分。
+4. **多模态材料核对**（P2）：图片抽字段（字段级置信度 + 人工校对闭环）、pHash + 字段指纹查重、申报与证据一致性比对。
 
 ## 快速开始
 
@@ -66,6 +67,10 @@ uv run scoreproof serve --port 8000
 │ 查值 → 同类取最高（不累加）→ 封顶 → 学年过滤 → 折算   │
 └──────────────────┬─────────────────────────────────┘
                    ↓
+┌─ 编排层（LangChain 工具 + 显式状态机）──────────────┐
+│ @tool/bind_tools → 空结果分支 → 数字校验 → 降级路由   │
+└──────────────────┬─────────────────────────────────┘
+                   ↓
 ┌─ 服务层  FastAPI + SSE 流式 + 引用面板 + 校对界面 ──┐
 └───────────────────────────────────────────────────┘
 ```
@@ -74,7 +79,7 @@ uv run scoreproof serve --port 8000
 
 ```
 scoreproof/
-├── pyproject.toml            # 依赖与工具配置（可选 extras：multimodal / retrieval / llm）
+├── pyproject.toml            # 依赖与工具配置（可选 extras：agent / multimodal / retrieval / llm）
 ├── .env.example              # 配置模板（密钥只从环境变量读，绝不入库）
 ├── data/                     # 原始材料与规则库（.gitignore 已隔离）
 │   ├── raw/                  # 原始文档：绝不提交
@@ -92,11 +97,12 @@ scoreproof/
 │   ├── indexing/             # 双级 Hash + manifest + BM25/Chroma 同批发布
 │   ├── calc/                 # 计算引擎（纯函数 + 可解释账本）
 │   ├── retrieval/            # structured 主 + 查询改写 + BM25/BGE + RRF/Rerank
+│   ├── agent/                # 五个 @tool + 显式状态机 + 数字护栏 + 降级路由
 │   ├── eval/                 # backtest + 检索三档消融评测
 │   ├── api/                  # FastAPI + SSE
 │   └── cli.py                # typer 命令行
 ├── reports/                  # 可复跑评测报告（样本量、版本、置信区间）
-├── tests/                    # 302 项自动化测试（合成/公开数据，无隐私）
+├── tests/                    # 317 项自动化测试（合成/公开数据，无隐私）
 └── web/                      # 前端占位（V3.0：P2 延后）
 ```
 
@@ -150,6 +156,7 @@ scoreproof/
 | `scoreproof parse-claims 综测表.xlsx` | 解析申报条目（含合并单元格 fill-down） |
 | `scoreproof import-rules 规则表.xlsx -y 2025-2026` | 规则入库（建议人工校对一遍） |
 | `scoreproof list-rules -y 2025-2026` | 查看规则库 |
+| `scoreproof ask-score "省级二等奖能加多少分" --student-id TEST-USER -y 2025-2026 --category 学科竞赛 --level 省级二等奖` | 真实工具编排入口；DeepSeek 不可用时自动降级，输出账本、状态轨迹与数字校验结果 |
 | `scoreproof calc 综测表.xlsx -y 2025-2026` | 批量核算，输出可回溯账目 |
 | `scoreproof explain 省二等奖` | 解释单条申报走哪个通道、引用哪段原文 |
 | `scoreproof route-pdf 细则.pdf --text 省二等奖` | 演示兜底检索与拒答 |
@@ -170,7 +177,7 @@ scoreproof/
 | 阶段 0～1 | 口径、Schema、数据库与工程基线 | ✅ 已完成 |
 | 阶段 2 | 异构解析与 LangChain 抽取 | 🟡 DeepSeek 真实 API 烟雾测试已通过；复杂版面回归集仍待验收 |
 | 阶段 3 | 五道抽取验证 + 独立发布冲突门禁 | ✅ 代码链路与 100 条分层冻结负例完成 |
-| 阶段 4 | 增量索引、混合检索、LangChain 工具编排 | 🟡 4.1～4.3 已完成：双级 Hash、预训练 BGE + RRF + Rerank 及真实 API/CLI 验收通过；4.4 工具编排待做 |
+| 阶段 4 | 增量索引、混合检索、LangChain 工具编排 | 🟡 4.1～4.4 已完成：增量索引、BGE + RRF + Rerank、五工具状态机及真实 CLI/API/DeepSeek 验收通过；4.5 引用核查与拒答待做 |
 | 阶段 5 | 确定性计算与 52 人回测 | 🟡 计算核心与 41 项边界测试完成；真实回测待做 |
 | 阶段 6 | OCR + LLM/VLM + 查重 | 🟡 RapidOCR、预处理、pHash 完成；字段链路与评测待做 |
 | 阶段 7 | 消融、全量评测与结项 | ⏳ 待做；Web 三端按 V3.0 延后至 P2 |
@@ -178,6 +185,8 @@ scoreproof/
 ## 测试
 
 检索冻结集（基于一份真实公开细则人工整理，**不是生产用户日志**）的最终报告见 `reports/retrieval-ablation-v1.json`：A/B/C 的 Hit@5 分别为 0.96/0.98/0.98，MRR@10 为 0.863/0.915/0.915；C 档 P95 为 1.139 秒、实际处理 2,000 个候选对。Rerank 相对 B 的 MRR 增量为 0，nDCG@10 增量为 +0.000336，按实验纪律如实披露。真实 API 双请求测试为冷启动 4.84 秒、模型缓存后的热请求 1.02 秒；P95 门槛按稳定运行口径统计，部署时应预热模型。
+
+编排护栏报告见 `reports/orchestration-guardrails-v1.json`：100/100 个账本外伪造数字被拦截；真实 CLI 降级、真实 Uvicorn HTTP 入口与真实 DeepSeek `bind_tools` 均通过。模型侧学生身份统一替换为 `CURRENT_STUDENT`，复测使用本地合成身份与仓库示例规则，不含真实学生数据；这次仅覆盖一条字段完整的核算主链路，阶段 4.5 的引用核查与成对拒答评测尚未包含。
 
 ```bash
 uv run pytest              # 全部单元测试

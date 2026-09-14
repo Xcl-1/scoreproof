@@ -1,0 +1,80 @@
+{
+  "schema_version": "1.0",
+  "stage": "4.4",
+  "generated_at": "2026-09-14",
+  "implementation": {
+    "tool_framework": "langchain-core==1.6.2",
+    "model_adapter": "langchain-openai==1.6.2",
+    "state_machine": "scoreproof.agent.orchestrator.ScoreProofOrchestrator",
+    "max_tool_rounds": 4,
+    "audit_table": "tool_calls"
+  },
+  "guardrail_evaluation": {
+    "dataset_version": "orchestration-fabricated-numbers-v1",
+    "dataset_kind": "synthetic_boundary_cases",
+    "fabricated_number_cases": 100,
+    "blocked": 100,
+    "block_rate": 1.0,
+    "empty_result_forced_clarification": true,
+    "two_failed_regenerations_use_deterministic_answer": true,
+    "session_ruleset_version_lock": true,
+    "model_failure_rules_fallback": true
+  },
+  "real_usage_tests": [
+    {
+      "entry": "scoreproof ask-score",
+      "kind": "real_cli_entry",
+      "model": "disabled_to_force_fallback",
+      "rules_source": "repository rules.sqlite copy generated from rules_sample.xlsx",
+      "result": "passed",
+      "outcome": "answer",
+      "tool_calls": ["lookup_rule", "calc_score"],
+      "ledger_total": 12.0,
+      "number_validation": true
+    },
+    {
+      "entry": "POST http://127.0.0.1:8765/api/agent",
+      "kind": "real_uvicorn_http_entry",
+      "model": "disabled_to_force_fallback",
+      "identity": "local session subject generated from request session_id",
+      "result": "passed",
+      "http_status": 200,
+      "state_trace": ["route", "rules_fallback", "regex_keyword_route", "number_validation", "answer"],
+      "tool_calls": ["lookup_rule", "calc_score"],
+      "ledger_total": 12.0,
+      "number_validation": true
+    },
+    {
+      "entry": "scoreproof ask-score --model",
+      "kind": "real_external_service",
+      "provider": "DeepSeek OpenAI-compatible API",
+      "model": "deepseek-v4-flash",
+      "local_identity": "TEST-USER",
+      "identity_sent_to_model": "CURRENT_STUDENT",
+      "data_scope": "student identity fields are redacted before model routing; this run used a synthetic local identity and repository sample rule",
+      "result": "passed",
+      "degraded": false,
+      "state_trace": ["route", "tool_round_1", "tool_round_2", "number_validation", "answer"],
+      "tool_calls": ["lookup_rule", "calc_score"],
+      "ledger_total": 12.0,
+      "answer_numbers": [12.0, 5, 3532, 44761, 40.0],
+      "unsupported_numbers": [],
+      "audit_statuses": ["ok", "ok"],
+      "audit_input_contains_api_key": false
+    }
+  ],
+  "automated_verification": {
+    "pytest_total": 317,
+    "pytest_passed": 317,
+    "ruff": "passed",
+    "mypy": "passed",
+    "uv_lock_offline": "passed"
+  },
+  "scope_and_limitations": [
+    "The 100 fabricated-number cases are synthetic boundary tests, not production conversations.",
+    "Real entry and external-service tests used repository sample rules and the synthetic local identity TEST-USER.",
+    "The model-facing student reference was CURRENT_STUDENT; no real student identity, certificate, or production log was sent to DeepSeek.",
+    "The DeepSeek result validates one well-formed scoring path; malformed multi-turn production traffic remains outside this report.",
+    "Stage 4.5 citation verification and paired refusal evaluation remain separate work."
+  ]
+}

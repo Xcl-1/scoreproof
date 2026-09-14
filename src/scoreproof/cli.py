@@ -211,6 +211,73 @@ def show_rules(
     console.print(table)
 
 
+@app.command("ask-score")
+def ask_score(
+    query: str = typer.Argument(..., help="自然语言核算问题"),
+    student_id: str = typer.Option(..., "--student-id", help="学号"),
+    academic_year: str = typer.Option(..., "--year", "-y", help="学年"),
+    category: str = typer.Option(..., "--category", help="申报类别"),
+    level: str = typer.Option(..., "--level", help="规范化等级/名次"),
+    college: str | None = typer.Option(None, "--college", help="学院"),
+    team: bool = typer.Option(False, "--team/--individual", help="团队或个人项目"),
+    use_model: bool = typer.Option(True, "--model/--no-model", help="启用模型工具路由"),
+    session_id: str | None = typer.Option(
+        None, "--session-id", help="审计会话 ID；规则版本锁在同一服务进程内复用"
+    ),
+    db: Path | None = typer.Option(None, "--db", help="规则库与工具审计 SQLite"),
+) -> None:
+    """通过工具编排查规则并核算；模型失败时自动降级，绝不让模型心算。"""
+    from .agent import OrchestrationRequest, ScoreProofOrchestrator
+    from .agent.orchestrator import make_deepseek_model
+
+    settings = get_settings()
+    store = RuleStore(db or settings.db_path)
+    try:
+        ruleset = store.load_ruleset(academic_year=academic_year, college=college)
+        if not ruleset.rules:
+            console.print("[yellow]规则库没有对应学年/学院的规则，无法核算。[/yellow]")
+            raise typer.Exit(code=2)
+        model = None
+        if use_model and settings.llm_configured:
+            assert settings.llm_api_key is not None
+            try:
+                model = make_deepseek_model(
+                    model=settings.llm_model,
+                    api_key=settings.llm_api_key,
+                    base_url=settings.llm_base_url,
+                )
+            except Exception:
+                model = None
+        claim = Claim(
+            student_id=student_id,
+            academic_year=academic_year,
+            college=college,
+            category=category,
+            raw_text=level,
+            level=level,
+            team=team,
+        )
+        request_data: dict[str, Any] = {
+            "query": query,
+            "claims": [claim],
+            "academic_year": academic_year,
+            "college": college,
+        }
+        if session_id:
+            request_data["session_id"] = session_id
+        result = ScoreProofOrchestrator(
+            ruleset,
+            model=model,
+            model_version=settings.llm_model if model is not None else "rules-only",
+            audit_sink=store,
+        ).run(OrchestrationRequest(**request_data))
+        console.print_json(result.model_dump_json())
+        if result.outcome != "answer":
+            raise typer.Exit(code=2)
+    finally:
+        store.close()
+
+
 # ======================================================================
 # 解析
 # ======================================================================

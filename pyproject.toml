@@ -31,6 +31,10 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# LangChain 工具 schema / 消息类型；编排层不依赖具体模型供应商。
+agent = [
+    "langchain-core==1.6.2",
+]
 # 细则表格抽取（"等级×类别 加分矩阵"）
 tables = [
     "pdfplumber>=0.11",

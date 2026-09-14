@@ -45,10 +45,12 @@ def client(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> TestClient:
         "settings",
         replace(
             state.settings,
+            db_path=tmp_path / "rules.sqlite",
             index_db_path=tmp_path / "index.sqlite",
             vector_dir=tmp_path / "chroma",
         ),
     )
+    monkeypatch.setattr(state, "_agent_sessions", None)
     with TestClient(app) as c:
         # startup 钩子会尝试从磁盘加载，这里再注入一次确保用的是内存规则
         get_state().ruleset = ruleset
@@ -119,6 +121,47 @@ class TestCalc:
 
     def test_empty_claims_rejected(self, client: TestClient) -> None:
         assert client.post("/api/calc", json={"claims": []}).status_code == 422
+
+    def test_agent_endpoint_real_rules_fallback(self, client: TestClient) -> None:
+        response = client.post(
+            "/api/agent",
+            json={
+                "query": "我获得省级二等奖，能加多少分？",
+                "use_model": False,
+                "academic_year": "2025-2026",
+                "claims": [CLAIM_OK],
+            },
+        )
+        assert response.status_code == 200
+        body = response.json()
+        assert body["outcome"] == "answer"
+        assert body["ledger"]["total"] == 8
+        assert body["number_validation"]["valid"] is True
+        assert body["tool_calls"] == ["lookup_rule", "calc_score"]
+
+    def test_agent_endpoint_model_factory_failure_falls_back(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        state = get_state()
+        monkeypatch.setattr(state, "settings", replace(state.settings, llm_api_key="fake"))
+
+        def broken_factory(**kwargs):
+            raise ImportError("langchain-openai unavailable")
+
+        monkeypatch.setattr(
+            "scoreproof.agent.orchestrator.make_deepseek_model", broken_factory
+        )
+        response = client.post(
+            "/api/agent",
+            json={
+                "query": "省级二等奖能加多少分？",
+                "academic_year": "2025-2026",
+                "claims": [CLAIM_OK],
+            },
+        )
+        assert response.status_code == 200
+        assert response.json()["ledger"]["total"] == 8
+        assert response.json()["degraded"] is True
 
     def test_sse_stream(self, client: TestClient) -> None:
         with client.stream(

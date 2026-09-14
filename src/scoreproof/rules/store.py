@@ -100,6 +100,20 @@ CREATE TABLE IF NOT EXISTS extraction_cache (
     created_at    TEXT NOT NULL,
     PRIMARY KEY(chunk_hash, model, variant)
 );
+
+CREATE TABLE IF NOT EXISTS tool_calls (
+    id             TEXT PRIMARY KEY,
+    session_id     TEXT NOT NULL,
+    tool_name      TEXT NOT NULL,
+    input_json     TEXT NOT NULL,
+    result_summary TEXT NOT NULL,
+    duration_ms    REAL NOT NULL,
+    model_version  TEXT NOT NULL,
+    status         TEXT NOT NULL,
+    error          TEXT,
+    created_at     TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_tool_calls_session ON tool_calls (session_id, created_at);
 """
 
 
@@ -310,6 +324,56 @@ class RuleStore:
                     datetime.now().isoformat(),
                 ),
             )
+
+    # ---------- 工具编排审计 ----------
+
+    def record_tool_call(
+        self,
+        *,
+        call_id: str,
+        session_id: str,
+        tool_name: str,
+        input_payload: dict,
+        result_summary: str,
+        duration_ms: float,
+        model_version: str,
+        status: Literal["ok", "error", "degraded"],
+        error: str | None = None,
+        created_at: datetime | None = None,
+    ) -> None:
+        """记录一次工具调用；调用参数只存业务字段，调用方不得传入密钥。"""
+        with self._conn:
+            self._conn.execute(
+                """
+                INSERT INTO tool_calls (
+                    id, session_id, tool_name, input_json, result_summary,
+                    duration_ms, model_version, status, error, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    call_id,
+                    session_id,
+                    tool_name,
+                    json.dumps(input_payload, ensure_ascii=False, default=str),
+                    result_summary,
+                    duration_ms,
+                    model_version,
+                    status,
+                    error,
+                    (created_at or datetime.now()).isoformat(),
+                ),
+            )
+
+    def list_tool_calls(self, *, session_id: str | None = None) -> list[dict]:
+        sql = "SELECT * FROM tool_calls"
+        params: list[str] = []
+        if session_id:
+            sql += " WHERE session_id = ?"
+            params.append(session_id)
+        # Windows 上 datetime.now() 可能让连续调用共享同一时间刻度；rowid 保留真实插入顺序。
+        sql += " ORDER BY created_at, rowid"
+        with closing(self._conn.execute(sql, params)) as cur:
+            return [dict(row) for row in cur.fetchall()]
 
     def record_extraction_report(
         self,

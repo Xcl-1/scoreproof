@@ -4242,6 +4242,9 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
+agent = [
+    { name = "langchain-core" },
+]
 dev = [
     { name = "mypy" },
     { name = "pytest" },
@@ -4274,6 +4277,7 @@ requires-dist = [
     { name = "fastembed", marker = "extra == 'retrieval'", specifier = ">=0.7,<1" },
     { name = "imagehash", marker = "extra == 'multimodal'", specifier = ">=4.3" },
     { name = "langchain-chroma", marker = "extra == 'retrieval'", specifier = ">=1.0,<2" },
+    { name = "langchain-core", marker = "extra == 'agent'", specifier = "==1.6.2" },
     { name = "langchain-openai", marker = "extra == 'llm'", specifier = "==1.6.2" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.11" },
     { name = "opencv-python-headless", marker = "extra == 'multimodal'", specifier = ">=4.10" },
@@ -4294,7 +4298,7 @@ requires-dist = [
     { name = "typer", specifier = ">=0.12" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.30" },
 ]
-provides-extras = ["tables", "multimodal", "retrieval", "llm", "dev"]
+provides-extras = ["agent", "tables", "multimodal", "retrieval", "llm", "dev"]
 
 [[package]]
 name = "shapely"
