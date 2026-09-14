@@ -1,0 +1,39 @@
+{
+  "positive_dataset_version": "fzu-ccds-retrieval-test-v2",
+  "positive_dataset_kind": "held-out test queries over one real public policy PDF; created after configuration freeze; not production user logs",
+  "negative_dataset_version": "scoreproof-refusal-boundary-v1",
+  "negative_dataset_kind": "50 manually authored out-of-domain boundary queries; paired with held-out answerable queries; not production user logs",
+  "positive_sample_size": 100,
+  "negative_sample_size": 50,
+  "citation_location_accuracy": {
+    "value": 0.98,
+    "ci95_low": 0.929988,
+    "ci95_high": 0.994498
+  },
+  "correct_refusal_rate": {
+    "value": 1.0,
+    "ci95_low": 0.928652,
+    "ci95_high": 1.0
+  },
+  "false_refusal_rate": {
+    "value": 0.0,
+    "ci95_low": 0.0,
+    "ci95_high": 0.036993
+  },
+  "positive_citation_failures": [
+    "paper-test-v2-01",
+    "overall-test-v2-09"
+  ],
+  "negative_refusal_failures": [],
+  "false_refusal_failures": [],
+  "latency_p50_ms": 37.263,
+  "latency_p95_ms": 52.171,
+  "embedding_query_count": 150,
+  "passed": true,
+  "notes": [
+    "Embedding=fastembed:BAAI/bge-small-zh-v1.5",
+    "Active manifests=im_e294d140b83347c0",
+    "正样本来自真实公开细则人工冻结问法；负样本为人工构造的域外边界，不是生产日志。",
+    "文本引用命中只进入人工确认，不自动计分。"
+  ]
+}

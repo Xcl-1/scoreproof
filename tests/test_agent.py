@@ -15,6 +15,7 @@ from scoreproof.agent import (
     ScoreProofOrchestrator,
     SessionRuleLock,
     ToolRuntime,
+    answer_cites_ledger,
     build_tools,
     ruleset_version,
     validate_answer_numbers,
@@ -247,12 +248,118 @@ class TestOrchestrator:
             ]
         )
         store = RuleStore(tmp_path / "empty.sqlite")
-        result = ScoreProofOrchestrator(one_rule, model=model, audit_sink=store).run(_request())
+        request = _request().model_copy(
+            update={"claims": [make_claim(level="不存在", category="其它")]}
+        )
+        result = ScoreProofOrchestrator(one_rule, model=model, audit_sink=store).run(request)
         names = [row["tool_name"] for row in store.list_tool_calls()]
         store.close()
         assert result.outcome == "clarification" and result.ledger is None
         assert "empty_result_branch" in result.state_trace
         assert names == ["lookup_rule", "ask_clarification"]
+
+    def test_redundant_empty_lookup_does_not_override_single_claim_success(
+        self, one_rule: Ruleset
+    ) -> None:
+        version = ruleset_version(one_rule)
+        claim_payload = CalcClaimInput.from_claim(_request().claims[0]).model_dump(mode="python")
+        good_lookup = {
+            "academic_year": "2025-2026",
+            "college": None,
+            "category": "学科竞赛",
+            "level": "省级二等奖",
+            "rank": None,
+            "item_name": None,
+        }
+        model = ScriptedModel(
+            [
+                AIMessage(
+                    content="",
+                    tool_calls=[
+                        {"name": "lookup_rule", "args": good_lookup, "id": "good"},
+                        {
+                            "name": "search_clauses",
+                            "args": {
+                                "query": "省级二等奖",
+                                "filters": {},
+                                "top_k": 5,
+                            },
+                            "id": "redundant-empty",
+                        },
+                    ],
+                ),
+                AIMessage(
+                    content="",
+                    tool_calls=[
+                        {
+                            "name": "calc_score",
+                            "args": {
+                                "claims": [claim_payload],
+                                "ruleset_version": version,
+                                "student_id": "CURRENT_STUDENT",
+                            },
+                            "id": "calc",
+                        }
+                    ],
+                ),
+                AIMessage(content="核算结果为 8 分，依据合成细则.pdf 第 4 页。"),
+            ]
+        )
+        result = ScoreProofOrchestrator(one_rule, model=model).run(_request())
+        assert result.outcome == "answer" and result.degraded is False
+        assert result.tool_calls == ["lookup_rule", "search_clauses", "calc_score"]
+        assert "redundant_empty_tool_ignored" in result.state_trace
+
+    def test_structured_claim_fields_override_model_hallucinated_arguments(
+        self, one_rule: Ruleset
+    ) -> None:
+        model = ScriptedModel(
+            [
+                AIMessage(
+                    content="",
+                    tool_calls=[
+                        {
+                            "name": "lookup_rule",
+                            "args": {
+                                "academic_year": "2025-2026",
+                                "college": None,
+                                "category": "学科竞赛",
+                                "level": "省级二等奖",
+                                "rank": None,
+                                "item_name": "模型臆造项目名",
+                            },
+                            "id": "lookup",
+                        }
+                    ],
+                ),
+                AIMessage(
+                    content="",
+                    tool_calls=[
+                        {
+                            "name": "calc_score",
+                            "args": {
+                                "claims": [
+                                    {
+                                        "claim_id": "wrong",
+                                        "category": "其它",
+                                        "level": "错误等级",
+                                        "team": False,
+                                        "catalog_listed": True,
+                                    }
+                                ],
+                                "ruleset_version": "wrong",
+                                "student_id": "wrong",
+                            },
+                            "id": "calc",
+                        }
+                    ],
+                ),
+                AIMessage(content="核算结果为 8 分，依据合成细则.pdf 第 4 页。"),
+            ]
+        )
+        result = ScoreProofOrchestrator(one_rule, model=model).run(_request())
+        assert result.outcome == "answer" and result.ledger is not None
+        assert result.ledger.total == 8 and result.ledger.student_id == "2023001"
 
     def test_broken_model_falls_back_to_lookup_and_calc(self, one_rule: Ruleset, tmp_path) -> None:
         class BrokenModel:
@@ -311,6 +418,37 @@ class TestOrchestrator:
         assert result.blocked_answer_count == 2
         assert "99" not in result.answer and "98" not in result.answer
         assert result.number_validation.valid and result.ledger.total == 8
+
+    def test_wrong_final_citation_is_blocked_even_when_number_is_valid(
+        self, one_rule: Ruleset
+    ) -> None:
+        version = ruleset_version(one_rule)
+        claim_payload = CalcClaimInput.from_claim(_request().claims[0]).model_dump(mode="python")
+        model = ScriptedModel(
+            [
+                AIMessage(
+                    content="",
+                    tool_calls=[
+                        {
+                            "name": "calc_score",
+                            "args": {
+                                "claims": [claim_payload],
+                                "ruleset_version": version,
+                                "student_id": "CURRENT_STUDENT",
+                            },
+                            "id": "calc",
+                            "type": "tool_call",
+                        }
+                    ],
+                ),
+                AIMessage(content="核算结果为 8 分，依据不存在.pdf 第 4 页。"),
+                AIMessage(content="核算结果为 8 分，依据合成细则.pdf 第 4 页。"),
+            ]
+        )
+        result = ScoreProofOrchestrator(one_rule, model=model).run(_request())
+        assert result.blocked_answer_count == 1
+        assert result.ledger is not None and answer_cites_ledger(result.answer, result.ledger)
+        assert "不存在.pdf" not in result.answer
 
     def test_model_messages_redact_student_identity(self, one_rule: Ruleset) -> None:
         model = ScriptedModel(

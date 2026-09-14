@@ -7,6 +7,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, StrictStr
 
+from ..retrieval.citation import CitationCheck
 from ..schema import Claim, ScoreBreakdown
 
 
@@ -138,6 +139,7 @@ class OrchestrationResult(BaseModel):
     state_trace: list[str] = Field(default_factory=list)
     tool_calls: list[str] = Field(default_factory=list)
     number_validation: NumberValidation | None = None
+    citation_check: CitationCheck | None = None
     blocked_answer_count: int = 0
 
 

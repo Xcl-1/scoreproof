@@ -24,6 +24,7 @@ from ..config import get_settings
 from ..errors import ScoreProofError
 from ..indexing import EmbeddingFunction, HybridIndexManifestStore, make_embedding_provider
 from ..ingest.excel_loader import load_rules
+from ..retrieval.citation import verify_text_citations
 from ..retrieval.hybrid import HybridRetriever
 from ..retrieval.query import rewrite_retrieval_query
 from ..retrieval.rerank import FastEmbedReranker, RerankingRetriever
@@ -371,6 +372,28 @@ def create_app() -> FastAPI:
             ],
         }
 
+    @app.post("/api/citation-check", tags=["retrieval"])
+    def citation_check(req: SearchRequest) -> dict:
+        """核查真实索引出处是否足以支撑候选答复；文本命中不自动给分。"""
+        st = get_state()
+        settings = st.settings
+        embeddings, model_version = st.embedding_provider()
+        with HybridIndexManifestStore(
+            settings.index_db_path,
+            vector_dir=settings.vector_dir,
+            embeddings=embeddings,
+            embedding_model=model_version,
+        ) as index:
+            retriever = HybridRetriever(
+                index,
+                academic_year=req.academic_year,
+                college=req.college,
+                doc_id=req.doc_id,
+                query_rewriter=rewrite_retrieval_query,
+            )
+            hits = retriever.search(req.query, top_k=req.top_k)
+        return verify_text_citations(req.query, hits).model_dump(mode="json")
+
     # ---------------- 工具编排 ----------------
 
     @app.post("/api/agent", tags=["agent"])
@@ -506,7 +529,9 @@ _INDEX_HTML = """<!doctype html>
  <li><a href="/health">/health</a> — 健康检查与规则数</li>
  <li><code>POST /api/calc</code> — 提交申报条目 -> 返回可回溯账目</li>
  <li><code>POST /api/explain</code> — 单条申报的通道命中与原文引用</li>
+ <li><code>POST /api/citation-check</code> — 核查真实索引引用并给出人工确认/拒答分支</li>
  <li><code>POST /api/refusal-check</code> — 未找到规则时是否正确拒答</li>
+ <li><code>POST /api/agent</code> — 工具编排、结构化核算与数字/引用门禁</li>
 </ul>
 </body></html>"""
 

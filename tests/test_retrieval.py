@@ -178,8 +178,9 @@ class TestRetrieverProtocol:
             def search(self, query: str, *, top_k: int = 5):
                 from scoreproof.retrieval.router import RetrievalHit
 
-                return [RetrievalHit(clause=_clauses()[0], score=1.0, rank=1)]
+                return [RetrievalHit(clause=_clauses()[2], score=1.0, rank=1)]
 
         router = Router(base_ruleset, retriever=Fake(), academic_year="2025-2026")
         res = router.route(make_claim("志愿者", level=None, category="志愿服务"))
         assert res.channel == "vector" and res.clause_text
+        assert res.disposition == "manual_review" and not res.refused

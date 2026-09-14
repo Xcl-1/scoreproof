@@ -18,6 +18,7 @@ from . import __version__
 from .calc.engine import EngineConfig, compute_all
 from .config import get_settings
 from .eval.backtest import load_ground_truth, run_backtest
+from .eval.citation import evaluate_citation_refusal, load_refusal_cases
 from .eval.gateway import GatewayNegativeCase, evaluate_gateway_negatives
 from .eval.retrieval import (
     build_ablation_report,
@@ -560,6 +561,58 @@ def eval_retrieval(
         out.write_text(payload, encoding="utf-8")
         console.print(f"已写出：{out}")
     console.print_json(payload)
+
+
+@app.command("eval-citation-refusal")
+def eval_citation_refusal(
+    positive_dataset: Path = typer.Argument(..., exists=True, dir_okay=False),
+    negative_dataset: Path = typer.Argument(..., exists=True, dir_okay=False),
+    db: Path | None = typer.Option(None, "--db"),
+    vector_dir: Path | None = typer.Option(None, "--vector-dir"),
+    embedding_model: str = typer.Option("BAAI/bge-small-zh-v1.5", "--embedding-model"),
+    model_cache: Path | None = typer.Option(None, "--model-cache"),
+    out: Path | None = typer.Option(None, "--out"),
+) -> None:
+    """成对评测引用定位、应拒答正确率与可回答问题误拒率。"""
+    settings = get_settings()
+    positive_version, positive_kind, positive_cases = load_retrieval_cases(positive_dataset)
+    negative_version, negative_kind, negative_cases = load_refusal_cases(negative_dataset)
+    embeddings = FastEmbedEmbeddings(
+        model_name=embedding_model,
+        cache_dir=model_cache or settings.model_cache_dir,
+    )
+    with HybridIndexManifestStore(
+        db or settings.index_db_path,
+        vector_dir=vector_dir or settings.vector_dir,
+        embeddings=embeddings,
+        embedding_model=embeddings.model_version,
+    ) as store:
+        retriever = HybridRetriever(store, query_rewriter=rewrite_retrieval_query)
+        active_manifest_ids = [batch.manifest_id for batch in store.active_batches()]
+        report = evaluate_citation_refusal(
+            retriever,
+            positive_cases,
+            negative_cases,
+            positive_dataset_version=positive_version,
+            positive_dataset_kind=positive_kind,
+            negative_dataset_version=negative_version,
+            negative_dataset_kind=negative_kind,
+            embedding_count=lambda: embeddings.query_count,
+            notes=[
+                f"Embedding={embeddings.model_version}",
+                f"Active manifests={','.join(active_manifest_ids)}",
+                "正样本来自真实公开细则人工冻结问法；负样本为人工构造的域外边界，不是生产日志。",
+                "文本引用命中只进入人工确认，不自动计分。",
+            ],
+        )
+    payload = report.model_dump_json(indent=2)
+    if out:
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(payload, encoding="utf-8")
+        console.print(f"已写出：{out}")
+    console.print_json(payload)
+    if not report.passed:
+        raise typer.Exit(code=2)
 
 
 @app.command("rollback-index-manifest")

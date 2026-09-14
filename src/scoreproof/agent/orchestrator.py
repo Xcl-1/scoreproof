@@ -12,6 +12,7 @@ from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
 from langchain_core.tools import BaseTool
 
 from ..normalize import normalize_level
+from ..retrieval.citation import CitationCheck, verify_score_breakdown
 from ..schema import Claim, ScoreBreakdown
 from .models import (
     CalcClaimInput,
@@ -117,6 +118,7 @@ class ScoreProofOrchestrator:
             try:
                 bound = self.model.bind_tools(tools)
                 messages: list[Any] = self._route_messages(request, runtime.version)
+                successful_lookup = False
                 for round_index in range(1, self.max_tool_rounds + 1):
                     response = bound.invoke(messages)
                     model_calls = list(getattr(response, "tool_calls", None) or [])
@@ -124,9 +126,17 @@ class ScoreProofOrchestrator:
                         break
                     trace.append(f"tool_round_{round_index}")
                     messages.append(response)
+                    empty_tools: list[str] = []
                     for call_index, call in enumerate(model_calls):
                         name = str(call.get("name", ""))
                         args = dict(call.get("args") or {})
+                        args = _trusted_structured_args(
+                            name,
+                            args,
+                            request=request,
+                            ruleset_version=runtime.version,
+                            use_student_alias=bool(runtime.student_aliases),
+                        )
                         call_id = str(call.get("id") or f"call_{round_index}_{call_index}")
                         selected = by_name.get(name)
                         if selected is None:
@@ -143,10 +153,6 @@ class ScoreProofOrchestrator:
                                 trace=trace,
                                 calls=calls,
                             )
-                        if _is_empty_tool_result(name, result):
-                            return self._clarify_empty(
-                                request, runtime, by_name, calls, trace, source_tool=name
-                            )
                         messages.append(
                             ToolMessage(
                                 content=json.dumps(
@@ -155,8 +161,35 @@ class ScoreProofOrchestrator:
                                 tool_call_id=call_id,
                             )
                         )
+                        if _is_empty_tool_result(name, result):
+                            empty_tools.append(name)
+                            continue
+                        if name == "lookup_rule":
+                            successful_lookup = True
                         if name == "calc_score":
                             ledger = ScoreBreakdown.model_validate(result)
+                    if empty_tools:
+                        redundant_for_single_claim = (
+                            len(request.claims) == 1
+                            and successful_lookup
+                            and set(empty_tools) <= {"lookup_rule", "search_clauses"}
+                        )
+                        if redundant_for_single_claim:
+                            trace.append("redundant_empty_tool_ignored")
+                            runtime.record_event(
+                                "redundant_empty_tool",
+                                {"tools": empty_tools},
+                                summary="单条结构化申报已有规则命中，忽略模型追加的空查询",
+                            )
+                        else:
+                            return self._clarify_empty(
+                                request,
+                                runtime,
+                                by_name,
+                                calls,
+                                trace,
+                                source_tool=empty_tools[0],
+                            )
                     if ledger is not None:
                         break
             except Exception as exc:
@@ -176,6 +209,38 @@ class ScoreProofOrchestrator:
             ledger = fallback
             degraded = True
 
+        trace.append("citation_validation")
+        citation_check = verify_score_breakdown(ledger, self.ruleset)
+        if citation_check.disposition != "auto_score":
+            runtime.record_event(
+                "citation_block",
+                citation_check.model_dump(mode="json"),
+                summary=citation_check.reason,
+            )
+            if citation_check.disposition == "manual_review":
+                trace.extend(["manual_review", "clarification"])
+                return self._result(
+                    request,
+                    runtime,
+                    outcome="clarification",
+                    answer="规则出处可定位，但当前命中需要人工确认，系统未自动给分。",
+                    trace=trace,
+                    calls=calls,
+                    degraded=degraded,
+                    citation_check=citation_check,
+                )
+            trace.extend(["citation_block", "refusal"])
+            return self._result(
+                request,
+                runtime,
+                outcome="refusal",
+                answer="核算结论未通过引用核查，系统已阻断无依据给分。",
+                trace=trace,
+                calls=calls,
+                degraded=degraded,
+                citation_check=citation_check,
+            )
+
         trace.append("number_validation")
         answer, validation, blocked = self._answer_with_guard(ledger)
         trace.append("answer")
@@ -189,6 +254,7 @@ class ScoreProofOrchestrator:
             ledger=ledger,
             degraded=degraded,
             validation=validation,
+            citation_check=citation_check,
             blocked=blocked,
         )
 
@@ -339,21 +405,26 @@ class ScoreProofOrchestrator:
                     response = self.model.invoke(prompt)
                     candidate = _response_text(response).strip()
                     validation = validate_answer_numbers(candidate, ledger)
-                    if candidate and validation.valid:
+                    citations_valid = answer_cites_ledger(candidate, ledger)
+                    if candidate and validation.valid and citations_valid:
                         return candidate, validation, blocked
                     blocked += 1
+                    problems: list[str] = []
+                    if validation.unsupported:
+                        problems.append("删除账本外数字：" + "、".join(validation.unsupported))
+                    if not citations_valid:
+                        problems.append("使用账本中的完整文档名和页码/条款")
                     prompt.append(
                         HumanMessage(
-                            content=(
-                                "上一版含账本外数字，已拦截。删除这些数字后重写："
-                                + "、".join(validation.unsupported)
-                            )
+                            content="上一版未通过代码校验，已拦截。请重写并" + "；".join(problems)
                         )
                     )
                 except Exception:
                     blocked += 1
                     break
         answer = deterministic_answer(ledger)
+        if not answer_cites_ledger(answer, ledger):  # pragma: no cover - 前置账本门禁应保证
+            raise RuntimeError("确定性答复未能携带账本中的精确出处")
         return answer, validate_answer_numbers(answer, ledger), blocked
 
     def _route_messages(self, request: OrchestrationRequest, version: str) -> list[Any]:
@@ -391,6 +462,7 @@ class ScoreProofOrchestrator:
         ledger: ScoreBreakdown | None = None,
         degraded: bool = False,
         validation: NumberValidation | None = None,
+        citation_check: CitationCheck | None = None,
         blocked: int = 0,
     ) -> OrchestrationResult:
         return OrchestrationResult(
@@ -404,6 +476,7 @@ class ScoreProofOrchestrator:
             state_trace=trace,
             tool_calls=list(calls or []),
             number_validation=validation,
+            citation_check=citation_check,
             blocked_answer_count=blocked,
         )
 
@@ -416,18 +489,56 @@ def validate_answer_numbers(answer: str, ledger: ScoreBreakdown) -> NumberValida
     return NumberValidation(valid=not unsupported, seen=seen, unsupported=unsupported)
 
 
+def answer_cites_ledger(answer: str, ledger: ScoreBreakdown) -> bool:
+    """最终答复必须逐一出现计入项的文档名及至少一种精确定位信息。"""
+    compact = re.sub(r"\s+", "", answer).casefold()
+    sources = {
+        match.source.model_dump_json(): match.source
+        for match in ledger.matches
+        if match.counted and match.source is not None
+    }.values()
+    if not sources:
+        return False
+    for source in sources:
+        if re.sub(r"\s+", "", source.doc).casefold() not in compact:
+            return False
+        locators: list[str] = []
+        if source.page is not None:
+            locators.extend((f"第{source.page}页", f"p{source.page}"))
+        if source.clause:
+            locators.append(re.sub(r"\s+", "", source.clause).casefold())
+        if source.table:
+            locators.append(re.sub(r"\s+", "", source.table).casefold())
+        if source.row is not None:
+            locators.extend((f"第{source.row}行", f"row{source.row}"))
+        if source.char_start is not None and source.char_end is not None:
+            locators.append(f"字符{source.char_start}-{source.char_end}")
+        if not locators or not any(locator in compact for locator in locators):
+            return False
+    return True
+
+
 def deterministic_answer(ledger: ScoreBreakdown) -> str:
     counted = [item for item in ledger.matches if item.counted and item.source is not None]
     answer = f"核算结果为 {ledger.total:g} 分。"
     if counted:
-        source = counted[0].source
-        assert source is not None
-        bits = [source.doc]
-        if source.page is not None:
-            bits.append(f"第 {source.page} 页")
-        if source.clause:
-            bits.append(source.clause)
-        answer += "依据：" + "，".join(bits) + "。"
+        source_labels: dict[str, str] = {}
+        for item in counted:
+            source = item.source
+            assert source is not None
+            bits = [source.doc]
+            if source.page is not None:
+                bits.append(f"第 {source.page} 页")
+            if source.clause:
+                bits.append(source.clause)
+            elif source.table:
+                bits.append(source.table)
+            if source.row is not None:
+                bits.append(f"第 {source.row} 行")
+            if source.char_start is not None and source.char_end is not None:
+                bits.append(f"字符 {source.char_start}-{source.char_end}")
+            source_labels.setdefault(source.model_dump_json(), "，".join(bits))
+        answer += "依据：" + "；".join(source_labels.values()) + "。"
     if ledger.unmatched_claims:
         answer += "存在未命中规则的申报，请人工复核。"
     return answer
@@ -455,6 +566,43 @@ def _claim_with_defaults(claim: Claim, request: OrchestrationRequest) -> Claim:
             "college": claim.college or request.college,
         }
     )
+
+
+def _trusted_structured_args(
+    tool_name: str,
+    model_args: dict[str, Any],
+    *,
+    request: OrchestrationRequest,
+    ruleset_version: str,
+    use_student_alias: bool,
+) -> dict[str, Any]:
+    """结构化申报是权威输入；模型只能选工具，不能改写用户已给字段。"""
+    claims = [_claim_with_defaults(claim, request) for claim in request.claims]
+    complete = bool(claims) and all(
+        claim.academic_year and claim.category and (claim.level or claim.raw_text.strip())
+        for claim in claims
+    )
+    if not complete:
+        return model_args
+    if tool_name == "lookup_rule" and len(claims) == 1:
+        claim = claims[0]
+        return {
+            "academic_year": claim.academic_year,
+            "college": claim.college,
+            "category": claim.category,
+            "level": claim.level or claim.raw_text.strip(),
+            "rank": claim.extra.get("rank"),
+            "item_name": claim.extra.get("item_name"),
+        }
+    if tool_name == "calc_score":
+        return {
+            "claims": [
+                CalcClaimInput.from_claim(claim).model_dump(mode="python") for claim in claims
+            ],
+            "ruleset_version": ruleset_version,
+            "student_id": _MODEL_STUDENT_REF if use_student_alias else claims[0].student_id,
+        }
+    return model_args
 
 
 def _claim_from_query(request: OrchestrationRequest, ruleset) -> Claim | None:
@@ -552,6 +700,7 @@ __all__ = [
     "ScoreProofOrchestrator",
     "SessionRuleLock",
     "SessionVersionConflict",
+    "answer_cites_ledger",
     "deterministic_answer",
     "make_deepseek_model",
     "validate_answer_numbers",

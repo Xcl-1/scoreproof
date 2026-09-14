@@ -21,6 +21,7 @@ from ..calc.engine import EngineConfig, MatchOutcome, RuleIndex, match_claim
 from ..normalize import normalize_level
 from ..schema import Claim, Rule, Ruleset, SourceRef
 from ..tokenize import tokenize_for_search
+from .citation import CitationCheck, has_precise_locator, verify_text_citations
 
 ChannelName = Literal["structured", "vector", "none"]
 
@@ -77,10 +78,12 @@ class RetrievalResult:
     candidates: list[RetrievalHit] = field(default_factory=list)
     score_candidates: list[float] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
+    citation_check: CitationCheck | None = None
+    disposition: Literal["auto_score", "manual_review", "refuse"] = "refuse"
 
     @property
     def refused(self) -> bool:
-        return not self.matched
+        return self.disposition == "refuse"
 
     def to_dict(self) -> dict:
         return {
@@ -96,6 +99,10 @@ class RetrievalResult:
             "reason": self.reason,
             "score_candidates": self.score_candidates,
             "notes": self.notes,
+            "disposition": self.disposition,
+            "citation_check": (
+                self.citation_check.model_dump(mode="json") if self.citation_check else None
+            ),
         }
 
 
@@ -282,15 +289,42 @@ class Router:
             outcome = self.structured.search_claim(claim)
             if outcome.matched and outcome.rule is not None:
                 high_confidence = outcome.strategy in ("exact_level", "synonym")
+                source_supported = has_precise_locator(outcome.rule.source)
+                disposition: Literal["auto_score", "manual_review", "refuse"] = (
+                    "auto_score"
+                    if high_confidence and source_supported
+                    else "manual_review"
+                    if source_supported
+                    else "refuse"
+                )
                 result = RetrievalResult(
                     channel="structured",
-                    matched=True,
+                    matched=source_supported,
                     rule=outcome.rule,
                     clause_text=outcome.rule.source.text,
                     source=outcome.rule.source,
                     confidence=outcome.confidence,
-                    needs_review=outcome.confidence < self.config.review_threshold,
-                    reason=outcome.reason,
+                    needs_review=(
+                        outcome.confidence < self.config.review_threshold or not source_supported
+                    ),
+                    reason=(
+                        outcome.reason
+                        if source_supported
+                        else "结构化规则缺少可精确定位的出处，禁止自动给分"
+                    ),
+                    citation_check=CitationCheck(
+                        supported=source_supported,
+                        disposition=disposition,
+                        reason=(
+                            "结构化规则命中且出处可精确定位。"
+                            if source_supported
+                            else "结构化规则缺少可精确定位的出处。"
+                        ),
+                        citation_ids=[outcome.rule.id] if source_supported else [],
+                        sources=[outcome.rule.source] if source_supported else [],
+                        unsupported_items=[] if source_supported else ["source_locator"],
+                    ),
+                    disposition=disposition,
                 )
                 if high_confidence:
                     return result
@@ -327,8 +361,26 @@ class Router:
                 needs_review=True,
                 reason=REFUSAL_MESSAGE,
                 notes=[structured_reason] if structured_reason else [],
+                disposition="refuse",
             )
         best = hits[0]
+        query = self._fallback_query(claim)
+        citation_check = verify_text_citations(query, hits, policy_scope=True)
+        if citation_check.disposition == "refuse":
+            return RetrievalResult(
+                channel="none",
+                matched=False,
+                confidence=0.0,
+                needs_review=True,
+                reason=REFUSAL_MESSAGE,
+                candidates=hits,
+                notes=[
+                    *([structured_reason] if structured_reason else []),
+                    citation_check.reason,
+                ],
+                citation_check=citation_check,
+                disposition="refuse",
+            )
         candidates = extract_score_candidates(best.clause.text)
         return RetrievalResult(
             channel="vector",
@@ -341,7 +393,13 @@ class Router:
             candidates=hits,
             score_candidates=candidates,
             notes=[structured_reason] if structured_reason else [],
+            citation_check=citation_check,
+            disposition="manual_review",
         )
+
+    @staticmethod
+    def _fallback_query(claim: Claim) -> str:
+        return " ".join(x for x in (claim.level or "", claim.raw_text, claim.category) if x)
 
     def explain(self, claim: Claim, *, top_k: int = 5) -> dict:
         """给人看的解释（引用面板 / CLI）。"""

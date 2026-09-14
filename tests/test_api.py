@@ -243,6 +243,19 @@ class TestRetrievalEndpoints:
         assert body["hits"][0]["id"] == "rules:page:2"
         assert body["hits"][0]["channel"] == "rrf"
 
+        citation = client.post(
+            "/api/citation-check",
+            json={"query": "志愿服务如何换算成绩", "top_k": 5},
+        )
+        assert citation.status_code == 200
+        assert citation.json()["disposition"] == "manual_review"
+        refused = client.post(
+            "/api/citation-check",
+            json={"query": "宿舍空调坏了找谁维修", "top_k": 5},
+        )
+        assert refused.status_code == 200
+        assert refused.json()["disposition"] == "refuse"
+
         class FakeReranker:
             model_version = "fake"
 

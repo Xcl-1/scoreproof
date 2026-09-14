@@ -14,7 +14,7 @@
 
 1. **异构文档 → 结构化规则库**：不是问答，是把非结构化规则变成可执行规则（带学年/学院/版本/出处）。
 2. **双通道检索 + 确定性计算**：结构化查表优先 → 原文检索兜底 → 未命中**拒答**（不瞎给分）。
-3. **LangChain 工具编排 + 代码级护栏**：五个 `@tool` 通过 `bind_tools` 暴露；空结果强制澄清，账本外数字强制拦截，模型不可用仍可查表算分。
+3. **LangChain 工具编排 + 代码级护栏**：五个 `@tool` 通过 `bind_tools` 暴露；空结果强制澄清，账本外数字与错误引用强制拦截，模型不可用仍可查表算分。
 4. **多模态材料核对**（P2）：图片抽字段（字段级置信度 + 人工校对闭环）、pHash + 字段指纹查重、申报与证据一致性比对。
 
 ## 快速开始
@@ -59,7 +59,7 @@ uv run scoreproof serve --port 8000
 ┌─ 检索层 ──────────────────────────────────────────┐
 │ structured  精确查表（主通道，给确定分值）           │
 │ fallback    查询改写 → BM25 + BGE 向量 → RRF → 精排 │
-│ router      双通道调度 + 置信度 + 未命中拒答         │
+│ router      双通道调度 + 引用核查 + 成对拒答门禁     │
 │ manifest    双级 Hash + BM25/向量同批快照 + 原子切换  │
 └──────────────────┬─────────────────────────────────┘
                    ↓
@@ -68,7 +68,7 @@ uv run scoreproof serve --port 8000
 └──────────────────┬─────────────────────────────────┘
                    ↓
 ┌─ 编排层（LangChain 工具 + 显式状态机）──────────────┐
-│ @tool/bind_tools → 空结果分支 → 数字校验 → 降级路由   │
+│ @tool/bind_tools → 空结果 → 引用/数字校验 → 降级路由  │
 └──────────────────┬─────────────────────────────────┘
                    ↓
 ┌─ 服务层  FastAPI + SSE 流式 + 引用面板 + 校对界面 ──┐
@@ -96,13 +96,13 @@ scoreproof/
 │   ├── rules/                # store(SQLite) + extractor(规则抽取)
 │   ├── indexing/             # 双级 Hash + manifest + BM25/Chroma 同批发布
 │   ├── calc/                 # 计算引擎（纯函数 + 可解释账本）
-│   ├── retrieval/            # structured 主 + 查询改写 + BM25/BGE + RRF/Rerank
-│   ├── agent/                # 五个 @tool + 显式状态机 + 数字护栏 + 降级路由
-│   ├── eval/                 # backtest + 检索三档消融评测
+│   ├── retrieval/            # structured 主 + BM25/BGE + RRF/Rerank + 引用核查
+│   ├── agent/                # 五个 @tool + 显式状态机 + 数字/引用护栏 + 降级路由
+│   ├── eval/                 # backtest + 检索消融 + 引用/拒答成对评测
 │   ├── api/                  # FastAPI + SSE
 │   └── cli.py                # typer 命令行
 ├── reports/                  # 可复跑评测报告（样本量、版本、置信区间）
-├── tests/                    # 317 项自动化测试（合成/公开数据，无隐私）
+├── tests/                    # 327 项自动化测试（合成/公开数据，无隐私）
 └── web/                      # 前端占位（V3.0：P2 延后）
 ```
 
@@ -137,6 +137,7 @@ scoreproof/
 | 学年 / 学院过滤 | `calc.engine.RuleIndex` | `college=None` 视为校级通用 |
 | 互斥组裁决 | `calc.engine.resolve_exclusive_groups` | 保留总分更高的组合，完全确定性 |
 | 未命中拒答 | `retrieval.router.REFUSAL_MESSAGE` | 兜底候选分值**不自动计分** |
+| 引用门禁 | `retrieval.citation` | 结构化账本逐项核对；文本命中只进人工确认 |
 
 ## 命令速查
 
@@ -148,6 +149,7 @@ scoreproof/
 | `scoreproof sync-pdf-hybrid 细则.pdf --doc-id school-rules --chunk-mode block --embedding-backend fastembed --embedding-model BAAI/bge-small-zh-v1.5` | 用预训练 BGE 建立 BM25/Chroma 同批 manifest；表格行保留级别上下文 |
 | `scoreproof search-index "第一专利人如何加分" --embedding-backend fastembed --embedding-model BAAI/bge-small-zh-v1.5 --rerank` | 查询改写后混合召回，并用 BGE Reranker 精排；输出各通道名次与分数 |
 | `scoreproof eval-retrieval tests/fixtures/retrieval_test_v2.json --out reports/retrieval-ablation-v1.json` | 复跑 A=BM25、B=+BGE/RRF、C=+Rerank 的 100 条冻结集评测 |
+| `scoreproof eval-citation-refusal tests/fixtures/retrieval_test_v2.json tests/fixtures/refusal_cases_v1.json --out reports/citation-refusal-v1.json` | 成对复跑引用定位、应拒答与误拒答指标 |
 | `scoreproof rollback-index-manifest school-rules` | 将活动索引回滚到上一份完整 manifest |
 | `scoreproof delete-index-document school-rules` | 从活动索引删除文档并保留历史快照 |
 | `scoreproof parse-image 奖状.png --ocr` | 检查图片质量、计算 pHash 并运行 RapidOCR |
@@ -177,7 +179,7 @@ scoreproof/
 | 阶段 0～1 | 口径、Schema、数据库与工程基线 | ✅ 已完成 |
 | 阶段 2 | 异构解析与 LangChain 抽取 | 🟡 DeepSeek 真实 API 烟雾测试已通过；复杂版面回归集仍待验收 |
 | 阶段 3 | 五道抽取验证 + 独立发布冲突门禁 | ✅ 代码链路与 100 条分层冻结负例完成 |
-| 阶段 4 | 增量索引、混合检索、LangChain 工具编排 | 🟡 4.1～4.4 已完成：增量索引、BGE + RRF + Rerank、五工具状态机及真实 CLI/API/DeepSeek 验收通过；4.5 引用核查与拒答待做 |
+| 阶段 4 | 增量索引、混合检索、LangChain 工具编排 | ✅ 4.1～4.5 已完成：索引、混合检索、五工具状态机、代码级引用门禁与成对拒答评测均通过真实 CLI/API 验收 |
 | 阶段 5 | 确定性计算与 52 人回测 | 🟡 计算核心与 41 项边界测试完成；真实回测待做 |
 | 阶段 6 | OCR + LLM/VLM + 查重 | 🟡 RapidOCR、预处理、pHash 完成；字段链路与评测待做 |
 | 阶段 7 | 消融、全量评测与结项 | ⏳ 待做；Web 三端按 V3.0 延后至 P2 |
@@ -186,7 +188,9 @@ scoreproof/
 
 检索冻结集（基于一份真实公开细则人工整理，**不是生产用户日志**）的最终报告见 `reports/retrieval-ablation-v1.json`：A/B/C 的 Hit@5 分别为 0.96/0.98/0.98，MRR@10 为 0.863/0.915/0.915；C 档 P95 为 1.139 秒、实际处理 2,000 个候选对。Rerank 相对 B 的 MRR 增量为 0，nDCG@10 增量为 +0.000336，按实验纪律如实披露。真实 API 双请求测试为冷启动 4.84 秒、模型缓存后的热请求 1.02 秒；P95 门槛按稳定运行口径统计，部署时应预热模型。
 
-编排护栏报告见 `reports/orchestration-guardrails-v1.json`：100/100 个账本外伪造数字被拦截；真实 CLI 降级、真实 Uvicorn HTTP 入口与真实 DeepSeek `bind_tools` 均通过。模型侧学生身份统一替换为 `CURRENT_STUDENT`，复测使用本地合成身份与仓库示例规则，不含真实学生数据；这次仅覆盖一条字段完整的核算主链路，阶段 4.5 的引用核查与成对拒答评测尚未包含。
+编排护栏报告见 `reports/orchestration-guardrails-v1.json`：100/100 个账本外伪造数字被拦截；真实 CLI 降级、真实 Uvicorn HTTP 入口与真实 DeepSeek `bind_tools` 均通过。模型侧学生身份统一替换为 `CURRENT_STUDENT`，复测使用本地合成身份与仓库示例规则，不含真实学生数据。
+
+引用与拒答成对报告见 `reports/citation-refusal-v1.json`：在同一份真实公开细则 PDF 上，可回答问法 n=100 的引用定位正确率为 98%（95% CI 93.0%–99.4%），人工构造域外负例 n=50 的正确拒答率为 100%（95% CI 92.9%–100%），可回答问法误拒答率为 0%（95% CI 0%–3.7%）。两条引用定位失败已保留在报告中；集合不是生产用户日志。真实 Uvicorn 复测同时覆盖了文本候选人工确认、域外拒答和结构化规则表行级自动核算；真实 DeepSeek 在结构化参数锁定后完成 `lookup_rule → calc_score`，最终文档名、表名与行号均通过代码校验且未降级。
 
 ```bash
 uv run pytest              # 全部单元测试
