@@ -54,6 +54,8 @@ class TestLevelNormalization:
     def test_special_awards(self) -> None:
         assert canonical_level("国家奖学金") == "国家奖学金"
         assert canonical_level("校级三好学生") == "三好学生"
+        assert canonical_level("发明专利一项") == "发明专利"
+        assert canonical_level("软件著作权登记") == "软件著作权"
 
     def test_unknown_returns_input_not_guess(self) -> None:
         """认不出来时原样返回 —— 绝不臆造等级。"""

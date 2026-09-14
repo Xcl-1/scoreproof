@@ -183,6 +183,12 @@ class TestLoadClaims:
         assert claim.source_ref.row == 2  # 表头第 1 行，第一条数据在第 2 行
         assert claim.source_ref.table == "综测汇总"
 
+    def test_claim_ids_are_stable_across_reloads(self, claims_excel: Path) -> None:
+        first = [claim.id for claim in load_claims(claims_excel)]
+        second = [claim.id for claim in load_claims(claims_excel)]
+        assert first == second
+        assert len(first) == len(set(first))
+
     def test_group_by_student(self, claims_excel: Path) -> None:
         grouped = group_claims_by_student(load_claims(claims_excel))
         assert len(grouped["2023001"]) == 3 and len(grouped["2023002"]) == 2
@@ -200,3 +206,14 @@ class TestLoadClaims:
         claim = load_claims(path, sheet="表")[0]
         assert claim.level is None
         assert claim.extra["level_matched"] is False
+
+    def test_explicit_item_key_is_preserved(self, tmp_path: Path) -> None:
+        openpyxl = pytest.importorskip("openpyxl")
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.append(["学号", "申报项ID", "申报内容", "等级"])
+        ws.append(["1", "award-001", "省二等奖", "省级二等奖"])
+        path = tmp_path / "item-key.xlsx"
+        wb.save(path)
+        claim = load_claims(path)[0]
+        assert claim.extra["item_key"] == "award-001"

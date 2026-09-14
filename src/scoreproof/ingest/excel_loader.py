@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import math
 import re
 from collections.abc import Iterable
@@ -409,6 +410,7 @@ def load_rules(
 # ======================================================================
 
 _CLAIM_COLUMN_CANDIDATES: dict[str, tuple[str, ...]] = {
+    "item_key": ("申报项标识", "申报项ID", "申报项编号"),
     "student_id": ("学号", "学生学号", "编号", "工号"),
     "student_name": ("姓名", "学生姓名", "名字"),
     "college": ("学院", "院系", "所在学院"),
@@ -464,8 +466,12 @@ def load_claims(
             sid = f"{name or '未知'}#{idx}"
 
         level_res = normalize_level(level_raw) if level_raw else None
+        source_ref = grid.source_ref(idx, table=grid.sheet, text=raw_text or level_raw)
+        stable_id_seed = f"{grid.sheet}|{source_ref.row}|{sid}"
+        stable_claim_id = f"c_{hashlib.sha256(stable_id_seed.encode('utf-8')).hexdigest()[:12]}"
         claims.append(
             Claim(
+                id=stable_claim_id,
                 student_id=sid,
                 student_name=name,
                 academic_year=year,
@@ -478,8 +484,17 @@ def load_claims(
                 raw_text=raw_text,
                 level=level_res.canonical if level_res and level_res.matched else None,
                 team=_as_bool(row.get(col["team"])) if col["team"] else False,
-                source_ref=grid.source_ref(idx, table=grid.sheet, text=raw_text or level_raw),
-                extra={"level_matched": bool(level_res and level_res.matched)} if level_res else {},
+                source_ref=source_ref,
+                extra={
+                    "level_matched": bool(level_res and level_res.matched),
+                    **(
+                        {"item_key": str(row.get(col["item_key"])).strip()}
+                        if col["item_key"] and not _is_blank(row.get(col["item_key"]))
+                        else {}
+                    ),
+                }
+                if level_res or col["item_key"]
+                else {},
             )
         )
     return claims

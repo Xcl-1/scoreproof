@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from collections.abc import Sequence
 from pathlib import Path
@@ -17,7 +18,12 @@ from rich.table import Table
 from . import __version__
 from .calc.engine import EngineConfig, compute_all
 from .config import get_settings
-from .eval.backtest import load_ground_truth, run_backtest
+from .eval.backtest import (
+    item_reference_template,
+    load_ground_truth,
+    load_item_expectations,
+    run_backtest,
+)
 from .eval.citation import evaluate_citation_refusal, load_refusal_cases
 from .eval.gateway import GatewayNegativeCase, evaluate_gateway_negatives
 from .eval.retrieval import (
@@ -918,41 +924,125 @@ def eval_extraction_gateway(
         raise typer.Exit(code=2)
 
 
+def _sheet_arg(value: str) -> str | int:
+    return int(value) if value.isdigit() else value
+
+
+def _file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for block in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+@app.command("export-backtest-template")
+def export_backtest_template(
+    excel: Path = typer.Argument(..., exists=True, help="往年综测表（申报明细）"),
+    out: Path = typer.Option(..., "--out", help="逐项历史参照/裁决模板 .xlsx/.csv"),
+    sheet: str = typer.Option("0", "--sheet"),
+    academic_year: str | None = typer.Option(None, "--year", "-y"),
+) -> None:
+    """从真实申报明细生成稳定的逐项回测标注模板。"""
+    claims = load_claims(excel, sheet=_sheet_arg(sheet), academic_year=academic_year)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    template = item_reference_template(claims)
+    if out.suffix.lower() == ".csv":
+        template.to_csv(out, index=False, encoding="utf-8-sig")
+    else:
+        template.to_excel(out, index=False, sheet_name="逐项参照")
+    console.print(f"已生成 {len(claims)} 条逐项参照模板：[bold]{out}[/bold]")
+    console.print("请填写“历史/裁决得分”；只有经业务确认的行才将“已裁决”设为“是”。")
+
+
 @app.command("backtest")
 def backtest(
     excel: Path = typer.Argument(..., exists=True, help="往年综测表（申报明细）"),
     truth: Path = typer.Option(..., "--truth", exists=True, help="往年汇总表（学号/总分）"),
+    item_reference: Path | None = typer.Option(
+        None, "--item-reference", exists=True, help="逐项历史参照/业务裁决表"
+    ),
     sheet: str = typer.Option("0", "--sheet"),
     truth_sheet: str = typer.Option("0", "--truth-sheet"),
+    item_sheet: str = typer.Option("0", "--item-sheet"),
     academic_year: str | None = typer.Option(None, "--year", "-y"),
     college: str | None = typer.Option(None, "--college"),
+    mode: str = typer.Option(
+        "historical-reference", "--mode", help="historical-reference 或 adjudicated-truth"
+    ),
+    required_students: int | None = typer.Option(
+        None, "--required-students", min=1, help="启用样本量与数据完整性门禁；正式验收填 52"
+    ),
     student_col: str = typer.Option("学号", "--student-col"),
     total_col: str = typer.Option("总分", "--total-col"),
-    out: Path | None = typer.Option(None, "--out", help="导出逐人比对 CSV/JSON"),
+    item_col: str = typer.Option("申报项标识", "--item-col"),
+    item_score_col: str = typer.Option("历史/裁决得分", "--item-score-col"),
+    out: Path | None = typer.Option(None, "--out", help="导出完整 JSON 报告"),
+    diff_out: Path | None = typer.Option(None, "--diff-out", help="导出完整差异 CSV"),
     db: Path | None = typer.Option(None, "--db"),
 ) -> None:
-    """用往年综测表回测计算准确率（**没测出来就不写数字**）。"""
-    sheet_arg: str | int = int(sheet) if sheet.isdigit() else sheet
-    truth_arg: str | int = int(truth_sheet) if truth_sheet.isdigit() else truth_sheet
-    claims = load_claims(excel, sheet=sheet_arg, academic_year=academic_year)
+    """执行逐人、逐项回测；无业务裁决时只报告与历史人工结果的一致性。"""
+    normalized_mode = mode.strip().lower().replace("-", "_")
+    if normalized_mode not in {"historical_reference", "adjudicated_truth"}:
+        raise typer.BadParameter("--mode 只能是 historical-reference 或 adjudicated-truth")
+    claims = load_claims(excel, sheet=_sheet_arg(sheet), academic_year=academic_year)
     ruleset = _load_ruleset(db)
-    ground_truth = load_ground_truth(truth, sheet=truth_arg, student_col=student_col,
-                                     total_col=total_col)
-    report = run_backtest(claims, ruleset, ground_truth, academic_year=academic_year,
-                          college=college)
+    ground_truth = load_ground_truth(
+        truth,
+        sheet=_sheet_arg(truth_sheet),
+        student_col=student_col,
+        total_col=total_col,
+    )
+    item_expectations = (
+        load_item_expectations(
+            item_reference,
+            sheet=_sheet_arg(item_sheet),
+            student_col=student_col,
+            item_col=item_col,
+            score_col=item_score_col,
+        )
+        if item_reference
+        else None
+    )
+    report = run_backtest(
+        claims,
+        ruleset,
+        ground_truth,
+        item_expectations=item_expectations,
+        mode=normalized_mode,  # type: ignore[arg-type]
+        required_students=required_students,
+        academic_year=academic_year,
+        college=college,
+    )
+    report.meta["input_sha256"] = {
+        "claims": _file_sha256(excel),
+        "totals": _file_sha256(truth),
+        **({"items": _file_sha256(item_reference)} if item_reference else {}),
+    }
     summary = report.summary()
     console.print_json(json.dumps(summary, ensure_ascii=False))
     console.print(
-        f"逐人一致率 [bold]{report.accuracy:.2%}[/bold]"
-        f"（{report.exact}/{report.total_students}），"
-        f"容差内 {report.accuracy_within_tolerance:.2%}"
+        f"{report.person_metric_name} [bold]{report.accuracy:.2%}[/bold]"
+        f"（{report.exact}/{report.total_students}），MAE {report.mean_absolute_error}，"
+        f"最大误差 {report.max_absolute_error}"
     )
+    if report.item_agreement is not None:
+        console.print(
+            f"{report.item_metric_name} [bold]{report.item_agreement:.2%}[/bold]"
+            f"（{report.matched_items}/{report.total_items}）"
+        )
     if out:
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(
-            json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8"
+            json.dumps(report.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8"
         )
-        console.print(f"已写出：{out}")
+        console.print(f"已写出完整报告：{out}")
+    if diff_out:
+        diff_out.parent.mkdir(parents=True, exist_ok=True)
+        report.diffs_frame().to_csv(diff_out, index=False, encoding="utf-8-sig")
+        console.print(f"已写出完整差异：{diff_out}")
+    if required_students is not None and not report.gate_passed:
+        raise typer.Exit(code=2)
 
 
 # ======================================================================

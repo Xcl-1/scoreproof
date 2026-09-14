@@ -32,7 +32,8 @@ uv run python scripts/make_sample_data.py
 # 4. 导入规则 -> 核算 -> 回测
 uv run scoreproof import-rules data/sample/rules_sample.xlsx --year 2025-2026
 uv run scoreproof calc data/sample/claims_sample.xlsx --year 2025-2026
-uv run scoreproof backtest data/sample/claims_sample.xlsx --truth data/sample/truth_sample.xlsx --year 2025-2026
+uv run scoreproof backtest data/sample/claims_sample.xlsx --truth data/sample/truth_sample.xlsx \
+  --item-reference data/sample/item_reference_sample.csv --required-students 5 --year 2025-2026
 
 # 5. 起服务（/docs 可交互调试）
 uv run scoreproof serve --port 8000
@@ -102,7 +103,7 @@ scoreproof/
 │   ├── api/                  # FastAPI + SSE
 │   └── cli.py                # typer 命令行
 ├── reports/                  # 可复跑评测报告（样本量、版本、置信区间）
-├── tests/                    # 327 项自动化测试（合成/公开数据，无隐私）
+├── tests/                    # 350 项自动化测试（合成/公开数据，无隐私）
 └── web/                      # 前端占位（V3.0：P2 延后）
 ```
 
@@ -162,8 +163,30 @@ scoreproof/
 | `scoreproof calc 综测表.xlsx -y 2025-2026` | 批量核算，输出可回溯账目 |
 | `scoreproof explain 省二等奖` | 解释单条申报走哪个通道、引用哪段原文 |
 | `scoreproof route-pdf 细则.pdf --text 省二等奖` | 演示兜底检索与拒答 |
-| `scoreproof backtest 明细.xlsx --truth 汇总.xlsx` | 回测计算准确率 |
+| `scoreproof export-backtest-template 明细.xlsx --out 逐项参照.xlsx` | 从申报明细生成稳定的逐项标注模板 |
+| `scoreproof backtest 明细.xlsx --truth 汇总.xlsx --item-reference 逐项参照.xlsx --required-students 52` | 逐人/逐项回测、完整差异与 52 人数据门禁 |
 | `scoreproof serve` | 启动 FastAPI（`/docs`） |
+
+### 52 人真实回测数据准备
+
+真实脱敏数据统一放在不会提交的 `data/eval/backtest-2025-2026/`：申报明细
+`claims.xlsx`、人工历史汇总 `totals.xlsx`，以及由下列命令生成并填写的 `items.xlsx`。
+
+```bash
+uv run scoreproof export-backtest-template data/eval/backtest-2025-2026/claims.xlsx \
+  --out data/eval/backtest-2025-2026/items.xlsx --year 2025-2026
+
+# 没有业务裁决：只能报告“与历史人工结果的一致率/差异率”
+uv run scoreproof backtest data/eval/backtest-2025-2026/claims.xlsx \
+  --truth data/eval/backtest-2025-2026/totals.xlsx \
+  --item-reference data/eval/backtest-2025-2026/items.xlsx \
+  --mode historical-reference --required-students 52 --year 2025-2026 \
+  --out reports/backtest-52-v1.json --diff-out reports/backtest-52-diffs-v1.csv
+```
+
+`items.xlsx` 的“历史/裁决得分”必须是最终计入总分的逐项贡献（去重、互斥、封顶后），
+每人的逐项合计应等于 `totals.xlsx`。所有差异必须填写“差异归因”；只有每项都经业务
+确认并把“已裁决”设为“是”后，才可改用 `--mode adjudicated-truth` 并称为准确率。
 
 ## 红线与合规
 
@@ -180,7 +203,7 @@ scoreproof/
 | 阶段 2 | 异构解析与 LangChain 抽取 | 🟡 DeepSeek 真实 API 烟雾测试已通过；复杂版面回归集仍待验收 |
 | 阶段 3 | 五道抽取验证 + 独立发布冲突门禁 | ✅ 代码链路与 100 条分层冻结负例完成 |
 | 阶段 4 | 增量索引、混合检索、LangChain 工具编排 | ✅ 4.1～4.5 已完成：索引、混合检索、五工具状态机、代码级引用门禁与成对拒答评测均通过真实 CLI/API 验收 |
-| 阶段 5 | 确定性计算与 52 人回测 | 🟡 计算核心与 41 项边界测试完成；真实回测待做 |
+| 阶段 5 | 确定性计算与 52 人回测 | 🟡 逐人/逐项回测、双口径、完整差异与 52 人门禁已落地；5 人合成文件真实 CLI 通过，52 人脱敏历史数据待提供 |
 | 阶段 6 | OCR + LLM/VLM + 查重 | 🟡 RapidOCR、预处理、pHash 完成；字段链路与评测待做 |
 | 阶段 7 | 消融、全量评测与结项 | ⏳ 待做；Web 三端按 V3.0 延后至 P2 |
 

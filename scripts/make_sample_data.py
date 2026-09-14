@@ -1,4 +1,4 @@
-"""生成**合成**演示数据：规则表 + 综测表 + 往年汇总（ground truth）。
+"""生成**合成**演示数据：规则表 + 综测表 + 逐人/逐项参照。
 
 重要：这里生成的每一行都是编造的，不含任何真实同学信息 —— 这个文件可以安全提交。
 真实材料请一律放到 ``data/raw/``（已被 .gitignore 隔离）。
@@ -112,6 +112,22 @@ def write_truth(path: Path, truth: dict[str, float], names: dict[str, str]) -> N
     print(f"[truth]  {path.name}: {len(truth)} 人（由引擎生成，供回测演示）")
 
 
+def write_item_reference(path: Path, claims, results) -> None:
+    from scoreproof.eval.backtest import item_reference_template
+
+    contributions = {
+        group.winner.claim_id: group.after_cap
+        for result in results.values()
+        for group in result.groups
+        if group.winner is not None and group.winner.counted
+    }
+    frame = item_reference_template(claims)
+    frame["历史/裁决得分"] = [contributions.get(claim.id, 0.0) for claim in claims]
+    frame["备注"] = "合成演示参照，不是历史业务真值"
+    frame.to_csv(path, index=False, encoding="utf-8-sig")
+    print(f"[items]  {path.name}: {len(frame)} 条（合成演示参照）")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="生成合成演示数据（无真实隐私信息）")
     parser.add_argument("--out", default="data/sample", help="输出目录，默认 data/sample")
@@ -123,6 +139,7 @@ def main() -> int:
     rules_path = out / "rules_sample.xlsx"
     claims_path = out / "claims_sample.xlsx"
     truth_path = out / "truth_sample.xlsx"
+    item_reference_path = out / "item_reference_sample.csv"
 
     write_rules(rules_path)
     write_claims(claims_path)
@@ -138,6 +155,7 @@ def main() -> int:
     truth = {sid: bd.total for sid, bd in results.items()}
     names = {c.student_id: c.student_name or "" for c in claims}
     write_truth(truth_path, truth, names)
+    write_item_reference(item_reference_path, claims, results)
 
     print("\n期望总分（由计算引擎生成）:")
     for sid, total in sorted(truth.items()):
@@ -153,7 +171,9 @@ def main() -> int:
     print(f"  uv run scoreproof import-rules {args.out}/rules_sample.xlsx --year 2025-2026")
     print(f"  uv run scoreproof calc {args.out}/claims_sample.xlsx --year 2025-2026")
     print(f"  uv run scoreproof backtest {args.out}/claims_sample.xlsx "
-          f"--truth {args.out}/truth_sample.xlsx --year 2025-2026")
+          f"--truth {args.out}/truth_sample.xlsx "
+          f"--item-reference {args.out}/item_reference_sample.csv "
+          f"--required-students 5 --year 2025-2026")
     return 0
 
 
