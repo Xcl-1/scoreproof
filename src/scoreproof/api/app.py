@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import uuid
 from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any, Literal
@@ -22,6 +23,7 @@ from .. import __version__
 from ..calc.engine import EngineConfig, compute_claims
 from ..config import get_settings
 from ..errors import ScoreProofError
+from ..evidence.certificate import extract_certificate as run_certificate_extraction
 from ..indexing import EmbeddingFunction, HybridIndexManifestStore, make_embedding_provider
 from ..ingest.excel_loader import load_rules
 from ..retrieval.citation import verify_text_citations
@@ -453,7 +455,41 @@ def create_app() -> FastAPI:
         finally:
             audit_store.close()
 
-    # ---------------- 证据 / 多模态（P2 入口） ----------------
+    # ---------------- 证据 / 多模态（阶段 6 最小入口） ----------------
+
+    @app.post("/api/evidence/extract-certificate", tags=["evidence"])
+    async def extract_certificate_api(
+        file: UploadFile = File(...),
+        preprocess_image: bool = True,
+        confidence_threshold: float = 0.8,
+        vlm_provider: str | None = None,
+    ) -> dict:
+        """上传真实图片并执行 RapidOCR + DeepSeek 文本抽取主链路。"""
+        if not 0 <= confidence_threshold <= 1:
+            raise HTTPException(status_code=422, detail="confidence_threshold 必须位于 [0,1]")
+        suffix = Path(file.filename or "certificate.png").suffix.lower()
+        if suffix not in {".bmp", ".jpeg", ".jpg", ".png", ".tif", ".tiff", ".webp"}:
+            raise HTTPException(status_code=400, detail="不支持的图片格式")
+        content = await file.read()
+        if not content or len(content) > 20 * 1024 * 1024:
+            raise HTTPException(status_code=400, detail="图片必须非空且不超过 20 MiB")
+        settings = get_state().settings
+        settings.ensure_dirs()
+        target = settings.data_dir / "tmp" / f"certificate-{uuid.uuid4().hex}{suffix}"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(content)
+        try:
+            result = run_certificate_extraction(
+                target,
+                run_preprocess=preprocess_image,
+                confidence_threshold=confidence_threshold,
+                provider=vlm_provider,
+            )
+        except ScoreProofError as exc:
+            raise HTTPException(status_code=400, detail=exc.to_dict()) from exc
+        st = get_state()
+        st.evidence[result.evidence.id] = result.evidence
+        return result.model_dump(mode="json", by_alias=True)
 
     @app.post("/api/evidence", tags=["evidence"])
     def upsert_evidence(payload: EvidenceIn) -> dict:

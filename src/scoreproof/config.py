@@ -77,6 +77,12 @@ class Settings:
     vlm_provider: str | None = field(
         default_factory=lambda: os.getenv("SCOREPROOF_VLM_PROVIDER") or None
     )
+    dashscope_api_key: str | None = field(
+        default_factory=lambda: os.getenv("DASHSCOPE_API_KEY") or None
+    )
+    zhipuai_api_key: str | None = field(
+        default_factory=lambda: os.getenv("ZHIPUAI_API_KEY") or None
+    )
 
     # ---------- 派生路径 ----------
     @property
@@ -97,6 +103,13 @@ class Settings:
     @property
     def llm_configured(self) -> bool:
         return bool(self.llm_api_key)
+
+    @property
+    def vlm_configured(self) -> bool:
+        provider = (self.vlm_provider or "").strip().lower()
+        return (provider == "qwen-vl-plus" and bool(self.dashscope_api_key)) or (
+            provider == "glm-4v" and bool(self.zhipuai_api_key)
+        )
 
     def ensure_dirs(self) -> None:
         for d in (
@@ -127,6 +140,7 @@ class Settings:
             "llm_base_url": self.llm_base_url,
             "llm_configured": self.llm_configured,
             "vlm_provider": self.vlm_provider,
+            "vlm_configured": self.vlm_configured,
         }
 
 

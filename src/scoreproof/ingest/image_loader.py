@@ -1,7 +1,7 @@
 """图片接入：质量检测、预处理、OCR 与感知哈希。
 
-本模块完成 P2 的本地、确定性部分；文本 LLM 字段抽取与 VLM 兜底仍通过
-明确的 ``UnsupportedModality`` 暴露，避免把未接通的外部模型伪装为可用。
+本模块负责本地、确定性的图像接入；文本 LLM 字段抽取、字段校验与 VLM
+触发决策由 ``scoreproof.evidence.certificate`` 实现并在本模块保留兼容入口。
 实现顺序（与项目总结第 4.2 节一致）：
 
     图片
@@ -39,12 +39,13 @@ def _load_optional_module(name: str) -> Any:
 
 # 奖状/证书要抽出的字段（与 Evidence.fields 对齐）
 CERTIFICATE_FIELDS: tuple[str, ...] = (
-    "赛事名称",
-    "等级",
-    "获奖时间",
-    "颁发单位",
     "姓名",
-    "是否团队",
+    "赛事名称",
+    "级别",
+    "奖项/名次",
+    "获奖日期",
+    "颁发单位",
+    "团队属性",
 )
 
 
@@ -388,20 +389,18 @@ def phash_distance(left: str, right: str) -> int:
         raise ValueError("pHash 必须是十六进制字符串") from exc
 
 
-def extract_certificate_fields(ocr_text: str, **kwargs: Any) -> dict[str, Any]:  # pragma: no cover
-    """OCR 文本 -> 结构化字段 + 逐字段置信度（走文本 LLM，非 VLM）。"""
-    raise UnsupportedModality(
-        "奖状字段抽取未实现（P2）",
-        detail={"fields": list(CERTIFICATE_FIELDS), "hint": "复用 rules.extractor.LLMExtractor 模式"},
-    )
+def extract_certificate_fields(ocr_text: str | OcrResult, **kwargs: Any) -> Any:
+    """兼容入口：OCR -> 严格 LLM 草稿 -> 代码校验与逐字段置信度。"""
+    from ..evidence.certificate import extract_certificate_fields as _extract
+
+    return _extract(ocr_text, **kwargs)
 
 
-def extract_with_vlm(path: str | Path, **kwargs: Any) -> dict[str, Any]:  # pragma: no cover
-    """低置信度兜底：把图片交给 VLM（Qwen-VL-Plus / GLM-4V）。"""
-    raise UnsupportedModality(
-        "VLM 兜底未实现（P2）",
-        detail={"providers": ["qwen-vl-plus", "glm-4v"], "path": str(path)},
-    )
+def extract_with_vlm(path: str | Path, **kwargs: Any) -> dict[str, Any]:
+    """兼容入口：仅允许低置信字段及必要裁剪区域进入 VLM。"""
+    from ..evidence.certificate import extract_with_vlm as _extract
+
+    return _extract(path, **kwargs)
 
 
 __all__ = [

@@ -284,6 +284,51 @@ class TestRetrievalEndpoints:
 
 
 class TestEvidence:
+    def test_extract_certificate_upload_entry(
+        self,
+        client: TestClient,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        state = get_state()
+        monkeypatch.setattr(state, "settings", replace(state.settings, data_dir=tmp_path / "data"))
+        evidence = Evidence(
+            id="ev_extract",
+            type="image",
+            ocr_text="学生001 国家级一等奖",
+            fields={"姓名": "学生001", "级别": "国家级", "奖项/名次": "一等奖"},
+            field_confidence={"姓名": 0.95, "级别": 0.9, "奖项/名次": 0.9},
+            extractor="ocr+llm",
+        )
+
+        class Result:
+            def __init__(self) -> None:
+                self.evidence = evidence
+
+            def model_dump(self, **_: object) -> dict:
+                return {
+                    "source": "uploaded",
+                    "extraction": {
+                        "fields": {"姓名": {"normalized_value": "学生001"}},
+                        "vlm": {"requested": False, "called": False},
+                    },
+                    "evidence": evidence.model_dump(mode="json"),
+                }
+
+        def fake_extract(path: Path, **_: object) -> Result:
+            assert path.exists() and path.name.startswith("certificate-")
+            return Result()
+
+        api_module = importlib.import_module("scoreproof.api.app")
+        monkeypatch.setattr(api_module, "run_certificate_extraction", fake_extract)
+        response = client.post(
+            "/api/evidence/extract-certificate",
+            files={"file": ("award.png", b"real-file-bytes", "image/png")},
+        )
+        assert response.status_code == 200, response.text
+        assert response.json()["evidence"]["id"] == "ev_extract"
+        assert "ev_extract" in get_state().evidence
+
     def test_upsert_and_duplicate_detection(self, client: TestClient) -> None:
         base = {
             "type": "image",

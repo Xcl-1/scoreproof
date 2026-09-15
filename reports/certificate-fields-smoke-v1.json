@@ -1,0 +1,105 @@
+{
+  "dataset_version": "synthetic-certificates-v1",
+  "config_hash": "63bb9c916381a7ad822d102c44d4a19b14d82c08df7d1cb16f8fb4c8497afaa0",
+  "models": [
+    "deepseek-v4-flash"
+  ],
+  "confidence_thresholds": [
+    0.8
+  ],
+  "sample_size": 5,
+  "synthetic": true,
+  "smoke_test_only": true,
+  "formal_gate_eligible": false,
+  "micro": {
+    "true_positive": 29,
+    "false_positive": 2,
+    "false_negative": 6,
+    "precision": 0.9355,
+    "recall": 0.8286,
+    "f1": 0.8788
+  },
+  "per_field": {
+    "姓名": {
+      "true_positive": 5,
+      "false_positive": 0,
+      "false_negative": 0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0
+    },
+    "赛事名称": {
+      "true_positive": 3,
+      "false_positive": 2,
+      "false_negative": 2,
+      "precision": 0.6,
+      "recall": 0.6,
+      "f1": 0.6
+    },
+    "级别": {
+      "true_positive": 5,
+      "false_positive": 0,
+      "false_negative": 0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0
+    },
+    "奖项/名次": {
+      "true_positive": 5,
+      "false_positive": 0,
+      "false_negative": 0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0
+    },
+    "获奖日期": {
+      "true_positive": 5,
+      "false_positive": 0,
+      "false_negative": 0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0
+    },
+    "颁发单位": {
+      "true_positive": 5,
+      "false_positive": 0,
+      "false_negative": 0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0
+    },
+    "团队属性": {
+      "true_positive": 1,
+      "false_positive": 0,
+      "false_negative": 4,
+      "precision": 1.0,
+      "recall": 0.2,
+      "f1": 0.3333
+    }
+  },
+  "raw_micro": null,
+  "raw_per_field": {},
+  "raw_labeled_values": 0,
+  "raw_complete_samples": 0,
+  "raw_exact_certificates": 0,
+  "raw_exact_certificate_rate": null,
+  "exact_certificates": 1,
+  "exact_certificate_rate": 0.2,
+  "exact_certificate_ci95": [
+    0.03622410863243014,
+    0.6244653702374747
+  ],
+  "vlm_triggered": 4,
+  "vlm_trigger_rate": 0.8,
+  "vlm_trigger_ci95": [
+    0.37553462976252544,
+    0.9637758913675698
+  ],
+  "vlm_called": 0,
+  "vlm_call_rate": 0.0,
+  "notes": [
+    "仅烟雾测试：合成数据或样本量小于正式字段评测要求 n≥30。",
+    "数据含合成图片，不得作为正式业务字段 F1 验收或简历数字。",
+    "标签未完整提供 raw_fields，原始值 F1 仅评测已标注字段；本次为空时报告 null。"
+  ]
+}

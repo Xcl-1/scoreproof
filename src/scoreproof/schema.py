@@ -347,7 +347,20 @@ class Evidence(BaseModel):
     def requires_review(self, threshold: float = 0.8) -> bool:
         return self.min_confidence < threshold or not self.manual_corrected
 
-    def fingerprint(self, keys: tuple[str, ...] = ("赛事", "等级", "时间", "姓名")) -> str:
+    def fingerprint(
+        self,
+        keys: tuple[str, ...] = (
+            "赛事名称",
+            "级别",
+            "奖项/名次",
+            "获奖日期",
+            "姓名",
+            "团队属性",
+            "赛事",
+            "等级",
+            "时间",
+        ),
+    ) -> str:
         """字段指纹：与 pHash 互补，用于拦截"一证多报"的截图变体。"""
         import hashlib
 

@@ -24,6 +24,7 @@ from .eval.backtest import (
     load_item_expectations,
     run_backtest,
 )
+from .eval.certificate import evaluate_certificate_fields, load_jsonl
 from .eval.citation import evaluate_citation_refusal, load_refusal_cases
 from .eval.gateway import GatewayNegativeCase, evaluate_gateway_negatives
 from .eval.retrieval import (
@@ -31,6 +32,7 @@ from .eval.retrieval import (
     evaluate_retriever,
     load_retrieval_cases,
 )
+from .evidence.certificate import extract_certificate
 from .indexing import (
     DocumentChunk,
     EmbeddingFunction,
@@ -715,6 +717,89 @@ def parse_image(
     if out:
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        console.print(f"已写出：{out}")
+
+
+@app.command("extract-certificate")
+def extract_certificate_command(
+    image: Path = typer.Argument(..., exists=True, dir_okay=False, help="奖状/证书图片"),
+    run_preprocess: bool = typer.Option(True, "--preprocess/--raw", help="是否预处理后再 OCR"),
+    processed_dir: Path | None = typer.Option(None, "--processed-dir", help="预处理图片输出目录"),
+    confidence_threshold: float = typer.Option(
+        0.8, "--confidence-threshold", min=0.0, max=1.0
+    ),
+    vlm_provider: str | None = typer.Option(
+        None, "--vlm-provider", help="仅覆盖触发判断：qwen-vl-plus 或 glm-4v"
+    ),
+    out: Path | None = typer.Option(None, "--out", help="导出完整 JSON（含 Evidence）"),
+) -> None:
+    """真实图片 -> RapidOCR -> DeepSeek 文本结构化 -> 校验/置信度/复核状态。"""
+    result = extract_certificate(
+        image,
+        run_preprocess=run_preprocess,
+        processed_dir=processed_dir,
+        confidence_threshold=confidence_threshold,
+        provider=vlm_provider,
+    )
+    encoded = result.model_dump_json(indent=2, by_alias=True)
+    console.print_json(encoded)
+    if result.extraction.vlm.requested and not result.extraction.vlm.called:
+        console.print("[yellow]VLM 未调用；低置信字段已明确转入人工复核。[/yellow]")
+    if out:
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(encoded, encoding="utf-8")
+        console.print(f"已写出：{out}")
+
+
+@app.command("eval-certificate-fields")
+def eval_certificate_fields_command(
+    labels: Path = typer.Argument(..., exists=True, dir_okay=False, help="字段标签 JSONL"),
+    predictions: Path | None = typer.Option(
+        None,
+        "--predictions",
+        exists=True,
+        dir_okay=False,
+        help="已有预测 JSONL；省略时从标签中的 image_path 实际抽取",
+    ),
+    predictions_out: Path | None = typer.Option(
+        None, "--predictions-out", help="保存本次实际抽取的逐图预测 JSONL"
+    ),
+    run_preprocess: bool = typer.Option(False, "--preprocess/--raw", help="实际抽取时是否预处理"),
+    dataset_version: str = typer.Option("certificate-fields-v1", "--dataset-version"),
+    out: Path | None = typer.Option(None, "--out", help="评测报告 JSON"),
+) -> None:
+    """评测字段 micro-F1/逐字段 F1/整证正确率/VLM 触发率与样本量。"""
+    label_rows = load_jsonl(labels)
+    if predictions is not None:
+        prediction_rows = load_jsonl(predictions)
+    else:
+        prediction_rows = []
+        for label in label_rows:
+            image_path = label.get("image_path")
+            if not isinstance(image_path, str) or not image_path.strip():
+                raise typer.BadParameter("省略 --predictions 时，每条标签必须包含 image_path")
+            result = extract_certificate(Path(image_path), run_preprocess=run_preprocess)
+            payload = result.model_dump(mode="json", by_alias=True)
+            payload["evidence_id"] = str(label.get("evidence_id") or "")
+            prediction_rows.append(payload)
+        if predictions_out:
+            predictions_out.parent.mkdir(parents=True, exist_ok=True)
+            predictions_out.write_text(
+                "\n".join(json.dumps(row, ensure_ascii=False) for row in prediction_rows) + "\n",
+                encoding="utf-8",
+            )
+    report = evaluate_certificate_fields(
+        label_rows,
+        prediction_rows,
+        dataset_version=dataset_version,
+    )
+    encoded = report.model_dump_json(indent=2)
+    console.print_json(encoded)
+    if report.smoke_test_only:
+        console.print("[yellow]仅烟雾测试：不得作为 n≥30 的正式字段 F1 验收。[/yellow]")
+    if out:
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(encoded, encoding="utf-8")
         console.print(f"已写出：{out}")
 
 
