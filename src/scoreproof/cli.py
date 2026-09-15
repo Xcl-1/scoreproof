@@ -26,6 +26,7 @@ from .eval.backtest import (
 )
 from .eval.certificate import evaluate_certificate_fields, load_jsonl
 from .eval.citation import evaluate_citation_refusal, load_refusal_cases
+from .eval.dedup import evaluate_dedup_pairs, load_dedup_dataset
 from .eval.gateway import GatewayNegativeCase, evaluate_gateway_negatives
 from .eval.retrieval import (
     build_ablation_report,
@@ -33,6 +34,8 @@ from .eval.retrieval import (
     load_retrieval_cases,
 )
 from .evidence.certificate import extract_certificate
+from .evidence.consistency import ConsistencyPolicy, compare_claim_evidence
+from .evidence.dedup import DuplicateThresholds, compare_evidence
 from .indexing import (
     DocumentChunk,
     EmbeddingFunction,
@@ -51,7 +54,7 @@ from .retrieval.router import Retriever, Router, clauses_from_pdf_pages
 from .rules.extractor import LLMExtractor
 from .rules.gateway import GatewayContext
 from .rules.store import RuleStore
-from .schema import Claim, Ruleset, SourceRef
+from .schema import Claim, Evidence, Ruleset, SourceRef
 
 app = typer.Typer(
     help="综测加分核算系统：Excel/PDF 解析 -> 规则库 -> 确定性核算 -> 回测",
@@ -797,6 +800,110 @@ def eval_certificate_fields_command(
     console.print_json(encoded)
     if report.smoke_test_only:
         console.print("[yellow]仅烟雾测试：不得作为 n≥30 的正式字段 F1 验收。[/yellow]")
+    if out:
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(encoded, encoding="utf-8")
+        console.print(f"已写出：{out}")
+
+
+def _json_object(path: Path) -> dict[str, Any]:
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise typer.BadParameter(f"JSON 顶层必须是对象：{path}")
+    return payload
+
+
+def _load_evidence_source(path: Path, fields_path: Path | None = None) -> Evidence:
+    if path.suffix.lower() == ".json":
+        payload = _json_object(path)
+        nested = payload.get("evidence", payload)
+        if not isinstance(nested, dict):
+            raise typer.BadParameter(f"evidence 必须是对象：{path}")
+        return Evidence.model_validate(nested)
+    fields = _json_object(fields_path) if fields_path is not None else {}
+    if "fields" in fields and isinstance(fields["fields"], dict):
+        fields = fields["fields"]
+    return Evidence(type="image", path=str(path), fields=fields, phash=phash(path))
+
+
+@app.command("compare-evidence")
+def compare_evidence_command(
+    left: Path = typer.Argument(..., exists=True, dir_okay=False, help="左侧图片或 Evidence JSON"),
+    right: Path = typer.Argument(..., exists=True, dir_okay=False, help="右侧图片或 Evidence JSON"),
+    left_fields: Path | None = typer.Option(
+        None, "--left-fields", exists=True, dir_okay=False, help="左图结构化字段 JSON"
+    ),
+    right_fields: Path | None = typer.Option(
+        None, "--right-fields", exists=True, dir_okay=False, help="右图结构化字段 JSON"
+    ),
+    phash_definite_max: int = typer.Option(2, "--phash-definite-max", min=0, max=64),
+    phash_suspected_max: int = typer.Option(10, "--phash-suspected-max", min=0, max=64),
+    out: Path | None = typer.Option(None, "--out", help="导出查重决策 JSON"),
+) -> None:
+    """真实文件/Evidence JSON -> SHA-256 + pHash + 字段事实联合查重。"""
+    limits = DuplicateThresholds(
+        phash_definite_max=phash_definite_max,
+        phash_suspected_max=phash_suspected_max,
+    )
+    decision = compare_evidence(
+        _load_evidence_source(left, left_fields),
+        _load_evidence_source(right, right_fields),
+        thresholds=limits,
+    )
+    encoded = decision.model_dump_json(indent=2)
+    console.print_json(encoded)
+    if out:
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(encoded, encoding="utf-8")
+        console.print(f"已写出：{out}")
+
+
+@app.command("check-evidence-consistency")
+def check_evidence_consistency_command(
+    claim_json: Path = typer.Argument(..., exists=True, dir_okay=False, help="Claim JSON"),
+    evidence_json: Path = typer.Argument(..., exists=True, dir_okay=False, help="Evidence JSON"),
+    policy_json: Path | None = typer.Option(
+        None, "--policy", exists=True, dir_okay=False, help="别名/目录/颁发单位策略 JSON"
+    ),
+    out: Path | None = typer.Option(None, "--out", help="导出逐字段一致性报告"),
+) -> None:
+    """确定性比对申报与证据；信息不足不会当作一致。"""
+    claim_payload = _json_object(claim_json)
+    evidence_payload = _json_object(evidence_json)
+    claim = Claim.model_validate(claim_payload.get("claim", claim_payload))
+    evidence = Evidence.model_validate(evidence_payload.get("evidence", evidence_payload))
+    policy = ConsistencyPolicy.model_validate(_json_object(policy_json)) if policy_json else None
+    report = compare_claim_evidence(claim, evidence, policy=policy)
+    encoded = report.model_dump_json(indent=2)
+    console.print_json(encoded)
+    if out:
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(encoded, encoding="utf-8")
+        console.print(f"已写出：{out}")
+
+
+@app.command("eval-evidence-dedup")
+def eval_evidence_dedup_command(
+    dataset: Path = typer.Argument(..., exists=True, dir_okay=False, help="成对查重评测 JSON"),
+    phash_definite_max: int = typer.Option(2, "--phash-definite-max", min=0, max=64),
+    phash_suspected_max: int = typer.Option(10, "--phash-suspected-max", min=0, max=64),
+    out: Path | None = typer.Option(None, "--out", help="导出评测报告 JSON"),
+) -> None:
+    """输出 Recall/Precision/F1、混淆矩阵和 n≥50 正式门禁。"""
+    version, independent, cases = load_dedup_dataset(dataset)
+    report = evaluate_dedup_pairs(
+        cases,
+        dataset_version=version,
+        independent_real_pairs=independent,
+        thresholds=DuplicateThresholds(
+            phash_definite_max=phash_definite_max,
+            phash_suspected_max=phash_suspected_max,
+        ),
+    )
+    encoded = report.model_dump_json(indent=2)
+    console.print_json(encoded)
+    if report.smoke_test_only:
+        console.print("[yellow]仅烟雾测试：不得作为 n≥50 对的正式查重验收。[/yellow]")
     if out:
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(encoded, encoding="utf-8")

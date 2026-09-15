@@ -1,0 +1,254 @@
+{
+  "dataset_version": "synthetic-transform-smoke-v1",
+  "config_hash": "58da0b9a34fef30ed7634f855a214051a884129cbb5ffa96f636843f831ecdcf",
+  "sample_size": 5,
+  "positive_pairs": 4,
+  "negative_pairs": 1,
+  "true_positive": 4,
+  "false_positive": 0,
+  "true_negative": 1,
+  "false_negative": 0,
+  "recall": 1.0,
+  "recall_ci95": [
+    0.5101091635454028,
+    1.0
+  ],
+  "precision": 1.0,
+  "precision_ci95": [
+    0.5101091635454028,
+    1.0
+  ],
+  "f1": 1.0,
+  "thresholds": {
+    "phash_definite_max": 2,
+    "phash_suspected_max": 10,
+    "semantic_definite_min": 0.98,
+    "semantic_suspected_min": 0.8,
+    "semantic_min_fields": 4
+  },
+  "independent_real_pairs": false,
+  "smoke_test_only": true,
+  "formal_gate_eligible": false,
+  "target_recall": 0.96,
+  "target_precision": 0.95,
+  "target_passed": false,
+  "results": [
+    {
+      "id": "exact-copy",
+      "expected_duplicate": true,
+      "predicted_duplicate": true,
+      "correct": true,
+      "transformation": "完全相同文件副本",
+      "hard_negative": null,
+      "decision": {
+        "left_id": "E0001",
+        "right_id": "E0001-exact",
+        "status": "确定重复",
+        "action": "拦截并人工复核",
+        "reasons": [
+          "文件 SHA-256 完全相同"
+        ],
+        "left_sha256": "fceede5a3e47bc938eb4d82ac3c97c918ada770c01b77213e0af782f3218a623",
+        "right_sha256": "fceede5a3e47bc938eb4d82ac3c97c918ada770c01b77213e0af782f3218a623",
+        "sha256_match": true,
+        "phash_distance": 0,
+        "fact_fingerprint_match": null,
+        "semantic_similarity": null,
+        "comparable_fields": 0,
+        "field_similarities": [],
+        "thresholds": {
+          "phash_definite_max": 2,
+          "phash_suspected_max": 10,
+          "semantic_definite_min": 0.98,
+          "semantic_suspected_min": 0.8,
+          "semantic_min_fields": 4
+        }
+      }
+    },
+    {
+      "id": "jpeg-compression",
+      "expected_duplicate": true,
+      "predicted_duplicate": true,
+      "correct": true,
+      "transformation": "JPEG quality=60 压缩",
+      "hard_negative": null,
+      "decision": {
+        "left_id": "E0001",
+        "right_id": "E0001-jpeg",
+        "status": "确定重复",
+        "action": "拦截并人工复核",
+        "reasons": [
+          "pHash 距离 0 ≤ 确定阈值 2"
+        ],
+        "left_sha256": "fceede5a3e47bc938eb4d82ac3c97c918ada770c01b77213e0af782f3218a623",
+        "right_sha256": "2d313d7ad0a158805ca9e9bf464ca408162ab823f3010dcea90a563f702379ea",
+        "sha256_match": false,
+        "phash_distance": 0,
+        "fact_fingerprint_match": null,
+        "semantic_similarity": null,
+        "comparable_fields": 0,
+        "field_similarities": [],
+        "thresholds": {
+          "phash_definite_max": 2,
+          "phash_suspected_max": 10,
+          "semantic_definite_min": 0.98,
+          "semantic_suspected_min": 0.8,
+          "semantic_min_fields": 4
+        }
+      }
+    },
+    {
+      "id": "brightness",
+      "expected_duplicate": true,
+      "predicted_duplicate": true,
+      "correct": true,
+      "transformation": "亮度 72%",
+      "hard_negative": null,
+      "decision": {
+        "left_id": "E0001",
+        "right_id": "E0001-dim",
+        "status": "确定重复",
+        "action": "拦截并人工复核",
+        "reasons": [
+          "pHash 距离 0 ≤ 确定阈值 2"
+        ],
+        "left_sha256": "fceede5a3e47bc938eb4d82ac3c97c918ada770c01b77213e0af782f3218a623",
+        "right_sha256": "c09c7eca90eacdd49bfcd6241d6953d329b4d6165f4e6255c8ea14913f0753b9",
+        "sha256_match": false,
+        "phash_distance": 0,
+        "fact_fingerprint_match": null,
+        "semantic_similarity": null,
+        "comparable_fields": 0,
+        "field_similarities": [],
+        "thresholds": {
+          "phash_definite_max": 2,
+          "phash_suspected_max": 10,
+          "semantic_definite_min": 0.98,
+          "semantic_suspected_min": 0.8,
+          "semantic_min_fields": 4
+        }
+      }
+    },
+    {
+      "id": "crop-resize",
+      "expected_duplicate": true,
+      "predicted_duplicate": true,
+      "correct": true,
+      "transformation": "四边裁剪 3% 后缩放",
+      "hard_negative": null,
+      "decision": {
+        "left_id": "E0001",
+        "right_id": "E0001-crop",
+        "status": "疑似重复",
+        "action": "送人工复核",
+        "reasons": [
+          "pHash 距离 10 ≤ 疑似阈值 10",
+          "缺少可比结构化事实，不能自动确认"
+        ],
+        "left_sha256": "fceede5a3e47bc938eb4d82ac3c97c918ada770c01b77213e0af782f3218a623",
+        "right_sha256": "f1343dbe470db23eb8e8fbb50c830c47270cdb292cd07c03861216dcc613d28c",
+        "sha256_match": false,
+        "phash_distance": 10,
+        "fact_fingerprint_match": null,
+        "semantic_similarity": null,
+        "comparable_fields": 0,
+        "field_similarities": [],
+        "thresholds": {
+          "phash_definite_max": 2,
+          "phash_suspected_max": 10,
+          "semantic_definite_min": 0.98,
+          "semantic_suspected_min": 0.8,
+          "semantic_min_fields": 4
+        }
+      }
+    },
+    {
+      "id": "different-certificate",
+      "expected_duplicate": false,
+      "predicted_duplicate": false,
+      "correct": true,
+      "transformation": null,
+      "hard_negative": "不同赛事奖状",
+      "decision": {
+        "left_id": "E0001",
+        "right_id": "E0002",
+        "status": "非重复",
+        "action": "放行",
+        "reasons": [
+          "关键事实冲突：获奖日期"
+        ],
+        "left_sha256": "fceede5a3e47bc938eb4d82ac3c97c918ada770c01b77213e0af782f3218a623",
+        "right_sha256": "0e29dce2392fa5a495c02676aa9f83fa9865520ee630bc73b11f91c10171a889",
+        "sha256_match": false,
+        "phash_distance": 20,
+        "fact_fingerprint_match": false,
+        "semantic_similarity": 0.7289,
+        "comparable_fields": 5,
+        "field_similarities": [
+          {
+            "field": "姓名",
+            "left_value": "学生001",
+            "right_value": "学生001",
+            "left_normalized": "学生001",
+            "right_normalized": "学生001",
+            "similarity": 1.0,
+            "exact": true,
+            "conflict": false
+          },
+          {
+            "field": "赛事名称",
+            "left_value": "全国大学生学科竞赛",
+            "right_value": "校级大学生学科竞赛",
+            "left_normalized": "全国大学生学科竞赛",
+            "right_normalized": "校级大学生学科竞赛",
+            "similarity": 0.7778,
+            "exact": false,
+            "conflict": false
+          },
+          {
+            "field": "级别",
+            "left_value": "国家级",
+            "right_value": "校级",
+            "left_normalized": "国家级",
+            "right_normalized": "校级",
+            "similarity": 0.4,
+            "exact": false,
+            "conflict": true
+          },
+          {
+            "field": "奖项/名次",
+            "left_value": "一等奖",
+            "right_value": "二等奖",
+            "left_normalized": "一等奖",
+            "right_normalized": "二等奖",
+            "similarity": 0.6667,
+            "exact": false,
+            "conflict": true
+          },
+          {
+            "field": "获奖日期",
+            "left_value": "2025-04-02",
+            "right_value": "2025-07-03",
+            "left_normalized": "2025-04-02",
+            "right_normalized": "2025-07-03",
+            "similarity": 0.8,
+            "exact": false,
+            "conflict": true
+          }
+        ],
+        "thresholds": {
+          "phash_definite_max": 2,
+          "phash_suspected_max": 10,
+          "semantic_definite_min": 0.98,
+          "semantic_suspected_min": 0.8,
+          "semantic_min_fields": 4
+        }
+      }
+    }
+  ],
+  "notes": [
+    "预测为‘确定重复’或‘疑似重复’均计入查重召回；系统只拦截/复核，不自动删除。",
+    "样本量 n=5 < 50，仅可作为烟雾测试。",
+    "数据集未声明为独立真实脱敏成对样本，不具备正式验收资格。"
+  ]
+}

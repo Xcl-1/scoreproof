@@ -11,6 +11,7 @@ import asyncio
 import json
 import uuid
 from collections.abc import AsyncIterator
+from itertools import combinations
 from pathlib import Path
 from typing import Any, Literal
 
@@ -24,6 +25,8 @@ from ..calc.engine import EngineConfig, compute_claims
 from ..config import get_settings
 from ..errors import ScoreProofError
 from ..evidence.certificate import extract_certificate as run_certificate_extraction
+from ..evidence.consistency import ConsistencyPolicy, compare_claim_evidence
+from ..evidence.dedup import DuplicateThresholds, compare_evidence, fact_fingerprint
 from ..indexing import EmbeddingFunction, HybridIndexManifestStore, make_embedding_provider
 from ..ingest.excel_loader import load_rules
 from ..retrieval.citation import verify_text_citations
@@ -94,6 +97,18 @@ class AgentRequest(BaseModel):
 
 class EvidenceIn(BaseModel):
     evidence: Evidence
+
+
+class EvidenceCompareRequest(BaseModel):
+    left_id: str
+    right_id: str
+    thresholds: DuplicateThresholds = Field(default_factory=DuplicateThresholds)
+
+
+class ClaimEvidenceCheckRequest(BaseModel):
+    claim: Claim
+    evidence_id: str
+    policy: ConsistencyPolicy = Field(default_factory=ConsistencyPolicy)
 
 
 class HealthResponse(BaseModel):
@@ -503,19 +518,61 @@ def create_app() -> FastAPI:
 
     @app.get("/api/evidence/duplicates", tags=["evidence"])
     def duplicates() -> dict:
-        """重复申报检测（pHash + 字段指纹）。"""
+        """兼容旧分组，并返回 SHA-256 + pHash 距离 + 字段事实的联合查重结果。"""
         st = get_state()
         by_phash: dict[str, list[str]] = {}
         by_fp: dict[str, list[str]] = {}
         for ev in st.evidence.values():
             if ev.phash:
                 by_phash.setdefault(ev.phash, []).append(ev.id)
-            by_fp.setdefault(ev.fingerprint(), []).append(ev.id)
+            fingerprint = fact_fingerprint(ev)
+            if fingerprint is not None:
+                by_fp.setdefault(fingerprint, []).append(ev.id)
         dupes = {
             "by_phash": {k: v for k, v in by_phash.items() if len(v) > 1},
             "by_fingerprint": {k: v for k, v in by_fp.items() if len(v) > 1},
         }
-        return {"total_evidence": len(st.evidence), **dupes}
+        decisions = [
+            compare_evidence(left, right)
+            for left, right in combinations(st.evidence.values(), 2)
+        ]
+        return {
+            "total_evidence": len(st.evidence),
+            "total_pairs": len(decisions),
+            "flagged_pairs": [
+                item.model_dump(mode="json") for item in decisions if item.flagged
+            ],
+            **dupes,
+        }
+
+    @app.post("/api/evidence/compare", tags=["evidence"])
+    def compare_evidence_api(payload: EvidenceCompareRequest) -> dict:
+        """按 ID 对两份已保存证据执行可解释联合查重。"""
+        st = get_state()
+        if payload.left_id == payload.right_id:
+            raise HTTPException(status_code=422, detail="left_id 与 right_id 必须不同")
+        left = st.evidence.get(payload.left_id)
+        right = st.evidence.get(payload.right_id)
+        if left is None or right is None:
+            missing = [
+                item
+                for item, evidence in ((payload.left_id, left), (payload.right_id, right))
+                if evidence is None
+            ]
+            raise HTTPException(status_code=404, detail={"missing_evidence_ids": missing})
+        return compare_evidence(left, right, thresholds=payload.thresholds).model_dump(mode="json")
+
+    @app.post("/api/evidence/check-claim", tags=["evidence"])
+    def check_claim_evidence_api(payload: ClaimEvidenceCheckRequest) -> dict:
+        """确定性核对申报与证据；缺字段明确进入人工复核。"""
+        evidence = get_state().evidence.get(payload.evidence_id)
+        if evidence is None:
+            raise HTTPException(status_code=404, detail="evidence_id 不存在")
+        return compare_claim_evidence(
+            payload.claim,
+            evidence,
+            policy=payload.policy,
+        ).model_dump(mode="json")
 
     # ---------------- 调试页 ----------------
 

@@ -104,7 +104,7 @@ scoreproof/
 │   ├── api/                  # FastAPI + SSE
 │   └── cli.py                # typer 命令行
 ├── reports/                  # 可复跑评测报告（样本量、版本、置信区间）
-├── tests/                    # 366 项自动化测试（合成/公开数据，无隐私）
+├── tests/                    # 382 项自动化测试（合成/公开数据，无隐私）
 └── web/                      # 前端占位（V3.0：P2 延后）
 ```
 
@@ -157,6 +157,9 @@ scoreproof/
 | `scoreproof parse-image 奖状.png --ocr` | 检查图片质量、计算 pHash 并运行 RapidOCR |
 | `scoreproof extract-certificate 奖状.png --out result.json` | RapidOCR + DeepSeek 文本结构化；输出逐字段原值/规范值/证据/bbox/置信度、VLM 原因和人工复核状态 |
 | `scoreproof eval-certificate-fields labels.jsonl --predictions predictions.jsonl --out report.json` | 输出规范值/原始值字段 F1、整证正确率、VLM 触发/调用率与样本量；合成或 n<30 自动标记为仅烟雾测试 |
+| `scoreproof compare-evidence 左图.png 右图.jpg --out decision.json` | 用文件 SHA-256、pHash 汉明距离和结构化事实联合查重；只拦截/送审，不自动删除 |
+| `scoreproof check-evidence-consistency claim.json evidence.json --policy policy.json` | 逐字段核对姓名、赛事别名、等级奖项、学年、团队、单位/目录和类别；信息不足进入人工复核 |
+| `scoreproof eval-evidence-dedup pairs.json --out report.json` | 输出查重 Recall、Precision、F1、Wilson 区间与混淆矩阵；n<50 或非独立真实样本自动标记为仅烟雾测试 |
 | `scoreproof extract-rules-llm 规则文本.txt -y 2025-2026 --double-check --allowed-level 第一专利人` | LLM 抽取经过五道验证及独立冲突门禁；自定义等级参数可重复；默认只审计不发布 |
 | `scoreproof eval-extraction-gateway tests/fixtures/gateway_negative_cases.json -y 2025-2026` | 复跑 100 条分层负例，报告各道网关及冲突门禁的 Wilson 95% 区间 |
 | `scoreproof parse-claims 综测表.xlsx` | 解析申报条目（含合并单元格 fill-down） |
@@ -207,7 +210,7 @@ uv run scoreproof backtest data/eval/backtest-2025-2026/claims.xlsx \
 | 阶段 3 | 五道抽取验证 + 独立发布冲突门禁 | ✅ 代码链路与 100 条分层冻结负例完成 |
 | 阶段 4 | 增量索引、混合检索、LangChain 工具编排 | ✅ 4.1～4.5 已完成：索引、混合检索、五工具状态机、代码级引用门禁与成对拒答评测均通过真实 CLI/API 验收 |
 | 阶段 5 | 确定性计算与 52 人回测 | 🟡 逐人/逐项回测、双口径、完整差异与 52 人门禁已落地；5 人合成文件真实 CLI 通过，52 人脱敏历史数据待提供 |
-| 阶段 6 | OCR + LLM/VLM + 查重 | 🟡 **6.1～6.2 代码主链路已落地但阶段未完成**：真实 RapidOCR + DeepSeek CLI 与 Uvicorn 上传 API 已跑通；VLM 未调用，n≥30 真实脱敏字段集与 n≥50 对查重集仍缺 |
+| 阶段 6 | OCR + LLM/VLM + 查重 | 🟡 **6.1～6.3 工具链已落地但阶段未完成**：真实 RapidOCR + DeepSeek CLI/Uvicorn 上传 API、联合查重 CLI/API 与一致性入口已跑通；VLM 未调用，n≥30 真实脱敏字段集与 n≥50 对独立真实查重集仍缺 |
 | 阶段 7 | 消融、全量评测与结项 | ⏳ 待做；Web 三端按 V3.0 延后至 P2 |
 
 ## 测试
@@ -219,6 +222,8 @@ uv run scoreproof backtest data/eval/backtest-2025-2026/claims.xlsx \
 引用与拒答成对报告见 `reports/citation-refusal-v1.json`：在同一份真实公开细则 PDF 上，可回答问法 n=100 的引用定位正确率为 98%（95% CI 93.0%–99.4%），人工构造域外负例 n=50 的正确拒答率为 100%（95% CI 92.9%–100%），可回答问法误拒答率为 0%（95% CI 0%–3.7%）。两条引用定位失败已保留在报告中；集合不是生产用户日志。真实 Uvicorn 复测同时覆盖了文本候选人工确认、域外拒答和结构化规则表行级自动核算；真实 DeepSeek 在结构化参数锁定后完成 `lookup_rule → calc_score`，最终文档名、表名与行号均通过代码校验且未降级。
 
 奖状字段烟雾报告见 `reports/certificate-fields-smoke-v1.json`：5 张合成图片均实际经过 RapidOCR 与 DeepSeek 文本 API；规范值 micro-F1 为 0.8788，整证完全正确 1/5，VLM 决策触发 4/5、实际调用 0/5。失败主要来自两张赛事名漏掉级别前缀，以及 4 张证书没有“个人”原文、系统按“不猜测”原则将团队属性置空。**该结果仅验证代码、CLI/API 与外部文本服务主链路，不是正式业务评测，不能用于简历；原始值标签尚未提供，raw F1 为 null。**
+
+查重烟雾报告见 `reports/evidence-dedup-smoke-v1.json`：真实 CLI 读取合成奖状文件及其完全相同、JPEG 压缩、亮度变化、裁剪缩放变体，n=5（重复正例 4、不同奖状负例 1）的烟雾结果为 TP=4、FP=0、TN=1、FN=0；Recall/Precision 点估计虽均为 1.0，但各自 Wilson 95% CI 下界仅 0.5101。**该集合规模小、类别不充分且图片为合成，不具备 n≥50 对正式验收资格，数字不得写入简历。**
 
 真正启用视觉模型前必须在 `.env` 二选一配置：`SCOREPROOF_VLM_PROVIDER=qwen-vl-plus` + `DASHSCOPE_API_KEY`，或 `SCOREPROOF_VLM_PROVIDER=glm-4v` + `ZHIPUAI_API_KEY`。当前 DeepSeek 是文本模型，不会被当作 VLM；未配置时低置信字段只进入人工复核。
 

@@ -371,3 +371,82 @@ class TestEvidence:
         a = Evidence(type="image", ocr_text="省级二等奖 张三")
         b = Evidence(type="image", ocr_text="省级二等奖 张三 ")
         assert a.fingerprint() == b.fingerprint()
+
+    def test_pair_compare_and_claim_consistency_endpoints(self, client: TestClient) -> None:
+        fields = {
+            "姓名": "张三",
+            "赛事名称": "数学建模竞赛",
+            "级别": "省级",
+            "奖项/名次": "二等奖",
+            "获奖日期": "2025-10-02",
+            "颁发单位": "省竞赛组委会",
+            "团队属性": "个人",
+            "申报类别": "学科竞赛",
+        }
+        for evidence_id, image_hash in (("ev_left", "0000000000000000"), ("ev_right", "0000000000000001")):
+            response = client.post(
+                "/api/evidence",
+                json={
+                    "evidence": {
+                        "id": evidence_id,
+                        "type": "image",
+                        "fields": fields,
+                        "phash": image_hash,
+                    }
+                },
+            )
+            assert response.status_code == 200
+
+        compared = client.post(
+            "/api/evidence/compare",
+            json={"left_id": "ev_left", "right_id": "ev_right"},
+        )
+        assert compared.status_code == 200, compared.text
+        assert compared.json()["status"] == "确定重复"
+        grouped = client.get("/api/evidence/duplicates").json()
+        assert grouped["total_pairs"] == 1
+        assert grouped["flagged_pairs"][0]["left_id"] == "ev_left"
+
+        checked = client.post(
+            "/api/evidence/check-claim",
+            json={
+                "claim": {
+                    "id": "claim-1",
+                    "student_id": "2025001",
+                    "student_name": "张三",
+                    "academic_year": "2025-2026",
+                    "category": "学科竞赛",
+                    "raw_text": "省级二等奖",
+                    "team": False,
+                    "extra": {"event_name": "数学建模竞赛"},
+                },
+                "evidence_id": "ev_left",
+                "policy": {
+                    "allowed_issuers": ["省竞赛组委会"],
+                    "catalog_events": ["数学建模竞赛"],
+                },
+            },
+        )
+        assert checked.status_code == 200, checked.text
+        assert checked.json()["status"] == "通过"
+
+    def test_pair_compare_rejects_missing_or_same_id(self, client: TestClient) -> None:
+        client.post(
+            "/api/evidence",
+            json={"evidence": {"id": "ev_one", "type": "image"}},
+        )
+        client.post(
+            "/api/evidence",
+            json={"evidence": {"id": "ev_two", "type": "image"}},
+        )
+        assert client.get("/api/evidence/duplicates").json()["by_fingerprint"] == {}
+        same = client.post(
+            "/api/evidence/compare",
+            json={"left_id": "ev_one", "right_id": "ev_one"},
+        )
+        assert same.status_code == 422
+        missing = client.post(
+            "/api/evidence/compare",
+            json={"left_id": "ev_one", "right_id": "missing"},
+        )
+        assert missing.status_code == 404
