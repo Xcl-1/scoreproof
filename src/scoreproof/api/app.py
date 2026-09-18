@@ -30,6 +30,7 @@ from ..evidence.consistency import ConsistencyPolicy, compare_claim_evidence
 from ..evidence.dedup import DuplicateThresholds, compare_evidence, fact_fingerprint
 from ..indexing import EmbeddingFunction, HybridIndexManifestStore, make_embedding_provider
 from ..ingest.excel_loader import load_rules
+from ..observability import CostLedger
 from ..retrieval.citation import verify_text_citations
 from ..retrieval.hybrid import HybridRetriever
 from ..retrieval.query import rewrite_retrieval_query
@@ -257,6 +258,13 @@ def create_app() -> FastAPI:
             candidate_version=candidate_version,
         ).model_dump(mode="json")
 
+    @app.get("/api/costs/summary", tags=["base"])
+    def cost_summary() -> dict:
+        """只读汇总模型 token/成本；不返回提示词、回复或用户原始标识。"""
+        settings = get_state().settings
+        with CostLedger(settings.cost_db_path) as ledger:
+            return ledger.report().model_dump(mode="json")
+
     # ---------------- 规则库 ----------------
 
     @app.get("/api/rules", tags=["rules"])
@@ -459,6 +467,10 @@ def create_app() -> FastAPI:
                 ).search(query, top_k=top_k)
 
         audit_store = RuleStore(settings.db_path)
+        cost_ledger = CostLedger(
+            settings.cost_db_path,
+            subject_salt=settings.cost_id_salt,
+        )
         try:
             request = OrchestrationRequest(
                 query=req.query,
@@ -474,9 +486,11 @@ def create_app() -> FastAPI:
                 audit_sink=audit_store,
                 clause_searcher=clause_searcher,
                 sessions=st.agent_sessions(),
+                cost_ledger=cost_ledger,
             ).run(request)
             return result.model_dump(mode="json")
         finally:
+            cost_ledger.close()
             audit_store.close()
 
     # ---------------- 证据 / 多模态（阶段 6 最小入口） ----------------
@@ -503,12 +517,15 @@ def create_app() -> FastAPI:
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(content)
         try:
-            result = run_certificate_extraction(
-                target,
-                run_preprocess=preprocess_image,
-                confidence_threshold=confidence_threshold,
-                provider=vlm_provider,
-            )
+            with CostLedger(settings.cost_db_path) as ledger:
+                result = run_certificate_extraction(
+                    target,
+                    run_preprocess=preprocess_image,
+                    confidence_threshold=confidence_threshold,
+                    provider=vlm_provider,
+                    cost_ledger=ledger,
+                    batch_id=f"certificate-api:{uuid.uuid4().hex}",
+                )
         except ScoreProofError as exc:
             raise HTTPException(status_code=400, detail=exc.to_dict()) from exc
         st = get_state()

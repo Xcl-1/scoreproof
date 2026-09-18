@@ -76,7 +76,14 @@ class CostSummary(BaseModel):
     rerank_pairs: int = Field(default=0, ge=0)
     vlm_calls: int = Field(default=0, ge=0)
     external_text_calls: int | None = Field(default=None, ge=0)
+    input_tokens: int | None = Field(default=None, ge=0)
+    output_tokens: int | None = Field(default=None, ge=0)
+    total_tokens: int | None = Field(default=None, ge=0)
+    usage_coverage_rate: float | None = Field(default=None, ge=0, le=1)
     monetary_cost_available: bool = False
+    monetary_cost_cny: float | None = Field(default=None, ge=0)
+    cost_per_100_materials_cny: float | None = Field(default=None, ge=0)
+    cost_per_subject_cny: float | None = Field(default=None, ge=0)
     notes: list[str] = Field(default_factory=list)
 
 
@@ -112,6 +119,7 @@ _ARTIFACTS: tuple[tuple[str, str], ...] = (
     ("dedup_smoke", "evidence-dedup-smoke-v1.json"),
     ("backtest", "backtest-52-v1.json"),
     ("user_trial", "user-trial-v1.json"),
+    ("cost", "cost-summary-v1.json"),
 )
 
 
@@ -495,11 +503,43 @@ def _cost_summary(payloads: Mapping[str, dict[str, Any] | None]) -> CostSummary:
     embedding_queries += int(_number(citation, "embedding_query_count") or 0)
     certificate = payloads.get("certificate") or payloads.get("certificate_smoke")
     vlm_calls += int(_number(certificate, "vlm_called") or 0)
+    observed = payloads.get("cost") or {}
+    external_calls = _number(observed, "external_calls")
+    by_purpose = observed.get("by_purpose")
+    if isinstance(by_purpose, list):
+        vision_calls = sum(
+            int(_number(item, "external_calls") or 0)
+            for item in by_purpose
+            if isinstance(item, dict) and item.get("key") == "certificate_vlm_crop"
+        )
+        vlm_calls = max(vlm_calls, vision_calls)
+        if external_calls is not None:
+            external_calls = max(0, external_calls - vision_calls)
+    monetary_available = bool(observed.get("monetary_cost_available"))
+    notes = observed.get("limitations")
+    normalized_notes = [str(item) for item in notes] if isinstance(notes, list) else []
+    if not observed:
+        normalized_notes.append("尚未生成统一 cost_events 汇总报告。")
     return CostSummary(
         embedding_queries=embedding_queries,
         rerank_pairs=rerank_pairs,
         vlm_calls=vlm_calls,
-        notes=["调用量可追溯；现有报告未记录统一 token 用量与人民币成本，货币成本尚不可用。"],
+        external_text_calls=int(external_calls) if external_calls is not None else None,
+        input_tokens=(
+            int(value) if (value := _number(observed, "input_tokens")) is not None else None
+        ),
+        output_tokens=(
+            int(value) if (value := _number(observed, "output_tokens")) is not None else None
+        ),
+        total_tokens=(
+            int(value) if (value := _number(observed, "total_tokens")) is not None else None
+        ),
+        usage_coverage_rate=_number(observed, "usage_coverage_rate"),
+        monetary_cost_available=monetary_available,
+        monetary_cost_cny=_number(observed, "monetary_cost_cny"),
+        cost_per_100_materials_cny=_number(observed, "cost_per_100_materials_cny"),
+        cost_per_subject_cny=_number(observed, "cost_per_subject_cny"),
+        notes=normalized_notes,
     )
 
 
@@ -591,7 +631,13 @@ def build_release_readiness(
             id="cost_observability",
             title="成本指标汇总",
             required=False,
-            status="警告" if not cost.monetary_cost_available else "通过",
+            status=(
+                "通过"
+                if cost.monetary_cost_available
+                and cost.cost_per_100_materials_cny is not None
+                and cost.cost_per_subject_cny is not None
+                else "警告"
+            ),
             metrics=cost.model_dump(mode="json"),
             reasons=cost.notes,
         )

@@ -49,6 +49,7 @@ from .indexing import (
 from .ingest.excel_loader import load_claims, load_rules
 from .ingest.image_loader import check_quality, phash, preprocess, run_ocr
 from .ingest.pdf_loader import load_pdf
+from .observability import CostLedger
 from .retrieval.hybrid import BM25Retriever, HybridRetriever
 from .retrieval.query import rewrite_retrieval_query
 from .retrieval.rerank import FastEmbedReranker, RerankingRetriever
@@ -245,7 +246,9 @@ def ask_score(
     from .agent.orchestrator import make_deepseek_model
 
     settings = get_settings()
-    store = RuleStore(db or settings.db_path)
+    database = db or settings.db_path
+    store = RuleStore(database)
+    cost_ledger = CostLedger(database, subject_salt=settings.cost_id_salt)
     try:
         ruleset = store.load_ruleset(academic_year=academic_year, college=college)
         if not ruleset.rules:
@@ -284,11 +287,13 @@ def ask_score(
             model=model,
             model_version=settings.llm_model if model is not None else "rules-only",
             audit_sink=store,
+            cost_ledger=cost_ledger,
         ).run(OrchestrationRequest(**request_data))
         console.print_json(result.model_dump_json())
         if result.outcome != "answer":
             raise typer.Exit(code=2)
     finally:
+        cost_ledger.close()
         store.close()
 
 
@@ -737,15 +742,20 @@ def extract_certificate_command(
         None, "--vlm-provider", help="仅覆盖触发判断：qwen-vl-plus 或 glm-4v"
     ),
     out: Path | None = typer.Option(None, "--out", help="导出完整 JSON（含 Evidence）"),
+    cost_db: Path | None = typer.Option(None, "--cost-db", help="模型 token/成本账本 SQLite"),
 ) -> None:
     """真实图片 -> RapidOCR -> DeepSeek 文本结构化 -> 校验/置信度/复核状态。"""
-    result = extract_certificate(
-        image,
-        run_preprocess=run_preprocess,
-        processed_dir=processed_dir,
-        confidence_threshold=confidence_threshold,
-        provider=vlm_provider,
-    )
+    settings = get_settings()
+    with CostLedger(cost_db or settings.cost_db_path) as ledger:
+        result = extract_certificate(
+            image,
+            run_preprocess=run_preprocess,
+            processed_dir=processed_dir,
+            confidence_threshold=confidence_threshold,
+            provider=vlm_provider,
+            cost_ledger=ledger,
+            batch_id=f"certificate:{_file_sha256(image)[:16]}",
+        )
     encoded = result.model_dump_json(indent=2, by_alias=True)
     console.print_json(encoded)
     if result.extraction.vlm.requested and not result.extraction.vlm.called:
@@ -772,6 +782,7 @@ def eval_certificate_fields_command(
     run_preprocess: bool = typer.Option(False, "--preprocess/--raw", help="实际抽取时是否预处理"),
     dataset_version: str = typer.Option("certificate-fields-v1", "--dataset-version"),
     out: Path | None = typer.Option(None, "--out", help="评测报告 JSON"),
+    cost_db: Path | None = typer.Option(None, "--cost-db", help="实际抽取时的模型成本账本"),
 ) -> None:
     """评测字段 micro-F1/逐字段 F1/整证正确率/VLM 触发率与样本量。"""
     label_rows = load_jsonl(labels)
@@ -779,14 +790,22 @@ def eval_certificate_fields_command(
         prediction_rows = load_jsonl(predictions)
     else:
         prediction_rows = []
-        for label in label_rows:
-            image_path = label.get("image_path")
-            if not isinstance(image_path, str) or not image_path.strip():
-                raise typer.BadParameter("省略 --predictions 时，每条标签必须包含 image_path")
-            result = extract_certificate(Path(image_path), run_preprocess=run_preprocess)
-            payload = result.model_dump(mode="json", by_alias=True)
-            payload["evidence_id"] = str(label.get("evidence_id") or "")
-            prediction_rows.append(payload)
+        settings = get_settings()
+        with CostLedger(cost_db or settings.cost_db_path) as ledger:
+            for label in label_rows:
+                image_path = label.get("image_path")
+                if not isinstance(image_path, str) or not image_path.strip():
+                    raise typer.BadParameter("省略 --predictions 时，每条标签必须包含 image_path")
+                image = Path(image_path)
+                result = extract_certificate(
+                    image,
+                    run_preprocess=run_preprocess,
+                    cost_ledger=ledger,
+                    batch_id=f"certificate-eval:{_file_sha256(image)[:16]}",
+                )
+                payload = result.model_dump(mode="json", by_alias=True)
+                payload["evidence_id"] = str(label.get("evidence_id") or "")
+                prediction_rows.append(payload)
         if predictions_out:
             predictions_out.parent.mkdir(parents=True, exist_ok=True)
             predictions_out.write_text(
@@ -957,6 +976,23 @@ def release_readiness_command(
         raise typer.Exit(code=2)
 
 
+@app.command("cost-report")
+def cost_report_command(
+    db: Path | None = typer.Option(None, "--db", help="cost_events 所在 SQLite"),
+    out: Path | None = typer.Option(None, "--out", help="保存成本汇总 JSON"),
+) -> None:
+    """汇总真实模型 token、缓存、模型分级和显式价格成本。"""
+    settings = get_settings()
+    with CostLedger(db or settings.cost_db_path) as ledger:
+        report = ledger.report()
+    encoded = report.model_dump_json(indent=2)
+    console.print_json(encoded)
+    if out:
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(encoded, encoding="utf-8")
+        console.print(f"已写出：{out}")
+
+
 # ======================================================================
 # 核算
 # ======================================================================
@@ -1107,8 +1143,14 @@ def extract_rules_llm(
         page=page,
         allowed_levels=frozenset(allowed_level or []),
     )
-    with RuleStore(db or settings.db_path) as store:
+    database = db or settings.db_path
+    with RuleStore(database) as store, CostLedger(database) as ledger:
+        # 先按旧构造契约创建，保持第三方/测试替身兼容；正式实现再注入账本上下文。
         extractor = LLMExtractor(cache=store)
+        if isinstance(extractor, LLMExtractor):
+            extractor.cost_ledger = ledger
+            extractor.material_id = f"document:{_file_sha256(source)}"
+            extractor.batch_id = f"rule-extraction:{_file_sha256(source)[:16]}"
         report = extractor.extract_validated(
             text,
             context=context,

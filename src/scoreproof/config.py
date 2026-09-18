@@ -35,6 +35,17 @@ class Settings:
     db_path: Path = field(
         default_factory=lambda: Path(os.getenv("SCOREPROOF_DB_PATH", "data/rules/rules.sqlite"))
     )
+    cost_db_path: Path = field(
+        default_factory=lambda: Path(
+            os.getenv(
+                "SCOREPROOF_COST_DB_PATH",
+                os.getenv("SCOREPROOF_DB_PATH", "data/rules/rules.sqlite"),
+            )
+        )
+    )
+    cost_id_salt: str | None = field(
+        default_factory=lambda: os.getenv("SCOREPROOF_COST_ID_SALT") or None
+    )
     index_db_path: Path = field(
         default_factory=lambda: Path(
             os.getenv("SCOREPROOF_INDEX_DB_PATH", "data/index/index.sqlite")
@@ -73,6 +84,15 @@ class Settings:
         default_factory=lambda: os.getenv("SCOREPROOF_LLM_MODEL", "deepseek-v4-flash")
     )
     llm_api_key: str | None = field(default_factory=lambda: os.getenv("DEEPSEEK_API_KEY") or None)
+    llm_input_cny_per_million: float | None = field(
+        default_factory=lambda: _optional_float("SCOREPROOF_LLM_INPUT_CNY_PER_MILLION")
+    )
+    llm_output_cny_per_million: float | None = field(
+        default_factory=lambda: _optional_float("SCOREPROOF_LLM_OUTPUT_CNY_PER_MILLION")
+    )
+    pricing_version: str | None = field(
+        default_factory=lambda: os.getenv("SCOREPROOF_MODEL_PRICING_VERSION") or None
+    )
 
     vlm_provider: str | None = field(
         default_factory=lambda: os.getenv("SCOREPROOF_VLM_PROVIDER") or None
@@ -116,6 +136,7 @@ class Settings:
             self.raw_dir,
             self.rules_dir,
             self.eval_dir,
+            self.cost_db_path.parent,
             self.index_db_path.parent,
             self.vector_dir,
             self.model_cache_dir,
@@ -127,6 +148,7 @@ class Settings:
         return {
             "data_dir": str(self.data_dir),
             "db_path": str(self.db_path),
+            "cost_db_path": str(self.cost_db_path),
             "index_db_path": str(self.index_db_path),
             "vector_dir": str(self.vector_dir),
             "model_cache_dir": str(self.model_cache_dir),
@@ -139,9 +161,28 @@ class Settings:
             "llm_model": self.llm_model,
             "llm_base_url": self.llm_base_url,
             "llm_configured": self.llm_configured,
+            "llm_pricing_configured": all(
+                value is not None
+                for value in (
+                    self.llm_input_cny_per_million,
+                    self.llm_output_cny_per_million,
+                    self.pricing_version,
+                )
+            ),
+            "cost_subject_tracking_configured": bool(self.cost_id_salt),
             "vlm_provider": self.vlm_provider,
             "vlm_configured": self.vlm_configured,
         }
+
+
+def _optional_float(name: str) -> float | None:
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
+        return None
+    value = float(raw)
+    if value < 0:
+        raise ValueError(f"{name} 不能为负数")
+    return value
 
 
 @lru_cache(maxsize=1)

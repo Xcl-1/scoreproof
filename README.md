@@ -104,7 +104,7 @@ scoreproof/
 │   ├── api/                  # FastAPI + SSE
 │   └── cli.py                # typer 命令行
 ├── reports/                  # 可复跑评测报告（样本量、版本、置信区间）
-├── tests/                    # 391 项自动化测试（合成/公开数据，无隐私）
+├── tests/                    # 400 项自动化测试（合成/公开数据，无隐私）
 └── web/                      # 前端占位（V3.0：P2 延后）
 ```
 
@@ -162,6 +162,7 @@ scoreproof/
 | `scoreproof eval-evidence-dedup pairs.json --out report.json` | 输出查重 Recall、Precision、F1、Wilson 区间与混淆矩阵；n<50 或非独立真实样本自动标记为仅烟雾测试 |
 | `scoreproof quality-gates --out reports/quality-gates-v1.json` | 真实运行 pytest、Ruff、mypy、离线锁文件与 diff 检查，并记录 Git HEAD、耗时和工作树冻结状态 |
 | `scoreproof release-readiness --candidate-version <commit>` | 汇总 RC 门禁、报告 SHA-256、成本调用量和阻塞项；烟雾报告永远不能使正式门禁通过 |
+| `scoreproof cost-report --out reports/cost-summary-v1.json` | 从 `cost_events` 汇总真实 token、缓存命中、强模型/二次抽取比例及显式价格成本；缺价格时不猜金额 |
 | `scoreproof extract-rules-llm 规则文本.txt -y 2025-2026 --double-check --allowed-level 第一专利人` | LLM 抽取经过五道验证及独立冲突门禁；自定义等级参数可重复；默认只审计不发布 |
 | `scoreproof eval-extraction-gateway tests/fixtures/gateway_negative_cases.json -y 2025-2026` | 复跑 100 条分层负例，报告各道网关及冲突门禁的 Wilson 95% 区间 |
 | `scoreproof parse-claims 综测表.xlsx` | 解析申报条目（含合并单元格 fill-down） |
@@ -213,7 +214,7 @@ uv run scoreproof backtest data/eval/backtest-2025-2026/claims.xlsx \
 | 阶段 4 | 增量索引、混合检索、LangChain 工具编排 | ✅ 4.1～4.5 已完成：索引、混合检索、五工具状态机、代码级引用门禁与成对拒答评测均通过真实 CLI/API 验收 |
 | 阶段 5 | 确定性计算与 52 人回测 | 🟡 逐人/逐项回测、双口径、完整差异与 52 人门禁已落地；5 人合成文件真实 CLI 通过，52 人脱敏历史数据待提供 |
 | 阶段 6 | OCR + LLM/VLM + 查重 | 🟡 **6.1～6.3 工具链已落地但阶段未完成**：真实 RapidOCR + DeepSeek CLI/Uvicorn 上传 API、联合查重 CLI/API 与一致性入口已跑通；VLM 未调用，n≥30 真实脱敏字段集与 n≥50 对独立真实查重集仍缺 |
-| 阶段 7 | 消融、全量评测与结项 | 🟡 **候选冻结与统一评测门禁已落地，阶段未完成**：质量命令和只读 CLI/API 已实跑；正式阻塞项被如实保留，Web 三端仍按 V3.0 延后至 P2 |
+| 阶段 7 | 消融、全量评测与结项 | 🟡 **候选门禁与成本可观测已落地，阶段未完成**：统一 `cost_events` 覆盖规则抽取、奖状抽取与 Agent，真实 DeepSeek usage 已落账；正式数据、VLM、用户试用及完整货币成本仍阻塞 |
 
 ## 测试
 
@@ -227,7 +228,9 @@ uv run scoreproof backtest data/eval/backtest-2025-2026/claims.xlsx \
 
 查重烟雾报告见 `reports/evidence-dedup-smoke-v1.json`：真实 CLI 读取合成奖状文件及其完全相同、JPEG 压缩、亮度变化、裁剪缩放变体，n=5（重复正例 4、不同奖状负例 1）的烟雾结果为 TP=4、FP=0、TN=1、FN=0；Recall/Precision 点估计虽均为 1.0，但各自 Wilson 95% CI 下界仅 0.5101。**该集合规模小、类别不充分且图片为合成，不具备 n≥50 对正式验收资格，数字不得写入简历。**
 
-阶段 7 就绪审计见 `reports/quality-gates-v1.json` 与 `reports/release-readiness-v1.json`：固定质量命令真实执行后 391 项测试、Ruff、mypy、`uv lock --offline --check` 和 `git diff --check` 均通过；由于当前变更尚未提交，候选冻结门禁仍阻塞。统一审计认可网关、A/B/C 三档消融、引用/拒答和编排护栏报告，但继续阻塞复杂 PDF 正式回归、n≥30 字段集、真实 VLM、n≥50 查重对、52 人回测和真实用户试用，并把缺少统一 token/货币成本记录列为警告。**这只是阶段 7 工具链与真实入口验证，不代表 RC 或项目结项。**
+阶段 7 就绪审计见 `reports/quality-gates-v1.json` 与 `reports/release-readiness-v1.json`：固定质量命令真实执行后 400 项测试、Ruff、mypy、`uv lock --offline --check` 和 `git diff --check` 均通过；由于当前变更尚未提交，候选冻结门禁仍阻塞。统一审计认可网关、A/B/C 三档消融、引用/拒答和编排护栏报告，但继续阻塞复杂 PDF 正式回归、n≥30 字段集、真实 VLM、n≥50 查重对、52 人回测和真实用户试用。**这只是阶段 7 工具链与真实入口验证，不代表 RC 或项目结项。**
+
+成本可观测报告见 `reports/cost-summary-v1.json`：统一账本只保存模型、用途、token、材料/批次标识、缓存状态和时间，不保存提示词、回复、密钥或原始学号；只有配置独立 `SCOREPROOF_COST_ID_SALT` 时才以 HMAC 记录稳定用户摘要。一次真实 DeepSeek 规则抽取成功返回输入 692、输出 540、合计 1,232 token；首次受限网络尝试作为失败事件如实保留。当前没有配置经账单确认的人民币单价，也没有真实学生批次，因此每 100 份材料和每名学生成本仍为 `null`，成本门禁保持警告，不能据此宣称阶段 7 完成。只读 API 为 `GET /api/costs/summary`。
 
 真正启用视觉模型前必须在 `.env` 二选一配置：`SCOREPROOF_VLM_PROVIDER=qwen-vl-plus` + `DASHSCOPE_API_KEY`，或 `SCOREPROOF_VLM_PROVIDER=glm-4v` + `ZHIPUAI_API_KEY`。当前 DeepSeek 是文本模型，不会被当作 VLM；未配置时低置信字段只进入人工复核。
 

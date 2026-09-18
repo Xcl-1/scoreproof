@@ -41,6 +41,7 @@ def _copy_existing_reports(target: Path) -> None:
         "orchestration-guardrails-v1.json",
         "certificate-fields-smoke-v1.json",
         "evidence-dedup-smoke-v1.json",
+        "cost-summary-v1.json",
     ):
         (target / filename).write_bytes((source / filename).read_bytes())
 
@@ -101,6 +102,9 @@ class TestReleaseReadiness:
         assert report.status == "阻塞"
         assert "backtest_52" in report.blocking_gate_ids
         assert "cost_observability" in report.warning_gate_ids
+        assert report.cost_summary.total_tokens == 1232
+        assert report.cost_summary.usage_coverage_rate == 1.0
+        assert report.cost_summary.monetary_cost_available is False
 
     def test_dirty_worktree_blocks_candidate_freeze(self, tmp_path: Path) -> None:
         _write(tmp_path / "quality-gates-v1.json", _quality(clean=False))

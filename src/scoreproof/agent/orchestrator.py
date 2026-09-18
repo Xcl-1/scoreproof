@@ -11,7 +11,9 @@ from typing import Any, Protocol
 from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
 from langchain_core.tools import BaseTool
 
+from ..config import get_settings
 from ..normalize import normalize_level
+from ..observability import CostLedger, classify_model_tier, pricing_from_settings
 from ..retrieval.citation import CitationCheck, verify_score_breakdown
 from ..schema import Claim, ScoreBreakdown
 from .models import (
@@ -72,6 +74,8 @@ class ScoreProofOrchestrator:
         clause_searcher: ClauseSearcher | None = None,
         sessions: SessionRuleLock | None = None,
         max_tool_rounds: int = 4,
+        cost_ledger: CostLedger | None = None,
+        model_provider: str = "deepseek",
     ) -> None:
         if not 1 <= max_tool_rounds <= 4:
             raise ValueError("max_tool_rounds 必须在 1 到 4 之间")
@@ -82,6 +86,8 @@ class ScoreProofOrchestrator:
         self.clause_searcher = clause_searcher
         self.sessions = sessions or SessionRuleLock()
         self.max_tool_rounds = max_tool_rounds
+        self.cost_ledger = cost_ledger
+        self.model_provider = model_provider
 
     def run(self, request: OrchestrationRequest) -> OrchestrationResult:
         trace = ["route"]
@@ -120,7 +126,12 @@ class ScoreProofOrchestrator:
                 messages: list[Any] = self._route_messages(request, runtime.version)
                 successful_lookup = False
                 for round_index in range(1, self.max_tool_rounds + 1):
-                    response = bound.invoke(messages)
+                    response = self._invoke_model(
+                        bound,
+                        messages,
+                        purpose="orchestration_route",
+                        request=request,
+                    )
                     model_calls = list(getattr(response, "tool_calls", None) or [])
                     if not model_calls:
                         break
@@ -242,7 +253,7 @@ class ScoreProofOrchestrator:
             )
 
         trace.append("number_validation")
-        answer, validation, blocked = self._answer_with_guard(ledger)
+        answer, validation, blocked = self._answer_with_guard(ledger, request=request)
         trace.append("answer")
         return self._result(
             request,
@@ -383,7 +394,7 @@ class ScoreProofOrchestrator:
         )
 
     def _answer_with_guard(
-        self, ledger: ScoreBreakdown
+        self, ledger: ScoreBreakdown, *, request: OrchestrationRequest
     ) -> tuple[str, NumberValidation, int]:
         blocked = 0
         if self.model is not None:
@@ -402,7 +413,12 @@ class ScoreProofOrchestrator:
             ]
             for _attempt in range(2):
                 try:
-                    response = self.model.invoke(prompt)
+                    response = self._invoke_model(
+                        self.model,
+                        prompt,
+                        purpose="answer_generation",
+                        request=request,
+                    )
                     candidate = _response_text(response).strip()
                     validation = validate_answer_numbers(candidate, ledger)
                     citations_valid = answer_cites_ledger(candidate, ledger)
@@ -426,6 +442,44 @@ class ScoreProofOrchestrator:
         if not answer_cites_ledger(answer, ledger):  # pragma: no cover - 前置账本门禁应保证
             raise RuntimeError("确定性答复未能携带账本中的精确出处")
         return answer, validate_answer_numbers(answer, ledger), blocked
+
+    def _invoke_model(
+        self,
+        model: BoundModel | ToolCallingModel,
+        messages: list[Any],
+        *,
+        purpose: str,
+        request: OrchestrationRequest,
+    ) -> Any:
+        """调用模型并仅记录用量元数据；提示词和回复不会进入成本账本。"""
+        try:
+            response = model.invoke(messages)
+        except Exception as exc:
+            if self.cost_ledger is not None:
+                self.cost_ledger.record_failure(
+                    provider=self.model_provider,
+                    model=self.model_version,
+                    model_tier=classify_model_tier(self.model_version),
+                    purpose=purpose,
+                    error=exc,
+                    material_id=f"request:{request.session_id}",
+                    batch_id=request.session_id,
+                    subject_id=request.claims[0].student_id if request.claims else None,
+                )
+            raise
+        if self.cost_ledger is not None:
+            self.cost_ledger.record_response(
+                response,
+                provider=self.model_provider,
+                model=self.model_version,
+                model_tier=classify_model_tier(self.model_version),
+                purpose=purpose,
+                material_id=f"request:{request.session_id}",
+                batch_id=request.session_id,
+                subject_id=request.claims[0].student_id if request.claims else None,
+                pricing=pricing_from_settings(get_settings()),
+            )
+        return response
 
     def _route_messages(self, request: OrchestrationRequest, version: str) -> list[Any]:
         payload = {

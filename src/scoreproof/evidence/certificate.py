@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -20,6 +21,7 @@ from ..config import get_settings
 from ..errors import DataSourceError, SchemaValidationError, ScoreProofError, UnsupportedModality
 from ..ingest.image_loader import ImageQuality, OcrLine, OcrResult, check_quality, phash, preprocess, run_ocr
 from ..normalize import parse_prize, parse_tier
+from ..observability import CostLedger, classify_model_tier, pricing_from_settings
 from ..schema import Evidence
 
 CERTIFICATE_FIELD_NAMES: tuple[str, ...] = (
@@ -206,11 +208,22 @@ class CertificatePipelineResult(BaseModel):
 class CertificateTextExtractor:
     """通过 OpenAI 兼容接口调用 DeepSeek，只抽 OCR 文本中的可见字段。"""
 
-    def __init__(self, *, model: str | None = None, client: Any = None) -> None:
+    def __init__(
+        self,
+        *,
+        model: str | None = None,
+        client: Any = None,
+        cost_ledger: CostLedger | None = None,
+        material_id: str | None = None,
+        batch_id: str | None = None,
+    ) -> None:
         settings = get_settings()
         self.model = model or settings.llm_model
         self.base_url = settings.llm_base_url
         self.client = client
+        self.cost_ledger = cost_ledger
+        self.material_id = material_id
+        self.batch_id = batch_id
 
     def available(self) -> bool:
         if self.client is not None:
@@ -291,10 +304,31 @@ class CertificateTextExtractor:
         except ScoreProofError:
             raise
         except Exception as exc:
+            if self.cost_ledger is not None:
+                self.cost_ledger.record_failure(
+                    provider="deepseek",
+                    model=self.model,
+                    model_tier=classify_model_tier(self.model),
+                    purpose="certificate_text_extraction",
+                    error=exc,
+                    material_id=self.material_id,
+                    batch_id=self.batch_id,
+                )
             raise DataSourceError(
                 "DeepSeek 奖状文本抽取调用失败",
                 detail={"model": self.model, "error_type": type(exc).__name__},
             ) from exc
+        if self.cost_ledger is not None:
+            self.cost_ledger.record_response(
+                response,
+                provider="deepseek",
+                model=self.model,
+                model_tier=classify_model_tier(self.model),
+                purpose="certificate_text_extraction",
+                material_id=self.material_id,
+                batch_id=self.batch_id,
+                pricing=pricing_from_settings(get_settings()),
+            )
         raw = self._response_text(response).strip()
         fenced = re.fullmatch(r"```(?:json)?\s*(.*?)\s*```", raw, flags=re.DOTALL | re.IGNORECASE)
         if fenced:
@@ -620,6 +654,8 @@ def extract_with_vlm(
     client: Any | None = None,
     provider: str | None = None,
     out_dir: str | Path | None = None,
+    cost_ledger: CostLedger | None = None,
+    batch_id: str | None = None,
 ) -> dict[str, Any]:
     """受限 VLM 注入口：只允许调用方传入低置信字段和明确 bbox。
 
@@ -689,7 +725,30 @@ def extract_with_vlm(
         "fields": list(fields),
         "crops": crops,
     }
-    response = client.invoke(payload)
+    try:
+        response = client.invoke(payload)
+    except Exception as exc:
+        if cost_ledger is not None:
+            cost_ledger.record_failure(
+                provider=chosen,
+                model=chosen,
+                model_tier="vision",
+                purpose="certificate_vlm_crop",
+                error=exc,
+                material_id=f"image:{_file_sha256(candidate)}",
+                batch_id=batch_id,
+            )
+        raise
+    if cost_ledger is not None:
+        cost_ledger.record_response(
+            response,
+            provider=chosen,
+            model=chosen,
+            model_tier="vision",
+            purpose="certificate_vlm_crop",
+            material_id=f"image:{_file_sha256(candidate)}",
+            batch_id=batch_id,
+        )
     if not isinstance(response, Mapping):
         raise SchemaValidationError("VLM 返回必须是结构化对象")
     return dict(response)
@@ -729,15 +788,23 @@ def extract_certificate(
     confidence_threshold: float = 0.8,
     provider: str | None = None,
     ocr_result: OcrResult | None = None,
+    cost_ledger: CostLedger | None = None,
+    batch_id: str | None = None,
 ) -> CertificatePipelineResult:
     """真实图片主链路：质量检查、预处理、RapidOCR、文本 LLM 与复核状态。"""
     source = Path(path)
     quality = check_quality(source)
     target = preprocess(source, out_dir=processed_dir) if run_preprocess else source
     ocr = ocr_result or run_ocr(target)
+    material_id = f"image:{_file_sha256(source)}"
+    selected_extractor = extractor or CertificateTextExtractor(
+        cost_ledger=cost_ledger,
+        material_id=material_id,
+        batch_id=batch_id,
+    )
     extraction = extract_certificate_fields(
         ocr,
-        extractor=extractor,
+        extractor=selected_extractor,
         confidence_threshold=confidence_threshold,
         provider=provider,
     )
@@ -778,6 +845,14 @@ def extract_certificate(
         extraction=extraction,
         evidence=evidence,
     )
+
+
+def _file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for block in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
 
 
 __all__ = [

@@ -1,8 +1,8 @@
 {
   "schema_version": "1.0",
-  "generated_at": "2026-09-18T11:52:44.217459+00:00",
-  "candidate_version": "b11632301cde9d3a746ae436cd5753ad3c51c2d6",
-  "manifest_hash": "719d6b15c15f7fa9f931d6d071091af9d965e101345466eb0d6dc74bb8e08caf",
+  "generated_at": "2026-09-18T13:34:37.892981+00:00",
+  "candidate_version": "6212925d04fd889c0138a79db75c0e7f8a0c64ff",
+  "manifest_hash": "56bf1f86798a9b8a135b25f27e38ee964503035003433975c5490cdeb33ddeeb",
   "status": "阻塞",
   "ready": false,
   "report_dir": "reports",
@@ -11,7 +11,7 @@
       "name": "quality",
       "path": "quality-gates-v1.json",
       "exists": true,
-      "sha256": "7755d1dfdf4a9ade20af1a3ed5558e5aa91eaf1c9308eaf045bf6d9a190af363",
+      "sha256": "f6c4255719f355a07b05297eb1e790849406c8270072dedda29a9a30995f0075",
       "valid_json": true,
       "error": null
     },
@@ -110,6 +110,14 @@
       "sha256": null,
       "valid_json": null,
       "error": null
+    },
+    {
+      "name": "cost",
+      "path": "cost-summary-v1.json",
+      "exists": true,
+      "sha256": "b87c4ed08ec544a5494283abed6728d34e18d4c44b0fefecd9f04a694373bef0",
+      "valid_json": true,
+      "error": null
     }
   ],
   "gates": [
@@ -119,9 +127,9 @@
       "required": true,
       "status": "阻塞",
       "artifact": "quality-gates-v1.json",
-      "sample_size": 391,
+      "sample_size": 400,
       "metrics": {
-        "git_head": "b11632301cde9d3a746ae436cd5753ad3c51c2d6",
+        "git_head": "6212925d04fd889c0138a79db75c0e7f8a0c64ff",
         "candidate_version_matches": true,
         "all_checks_passed": true
       },
@@ -280,14 +288,23 @@
         "embedding_queries": 350,
         "rerank_pairs": 2000,
         "vlm_calls": 0,
-        "external_text_calls": null,
+        "external_text_calls": 2,
+        "input_tokens": 692,
+        "output_tokens": 540,
+        "total_tokens": 1232,
+        "usage_coverage_rate": 1.0,
         "monetary_cost_available": false,
+        "monetary_cost_cny": null,
+        "cost_per_100_materials_cny": null,
+        "cost_per_subject_cny": null,
         "notes": [
-          "调用量可追溯；现有报告未记录统一 token 用量与人民币成本，货币成本尚不可用。"
+          "未对全部成功外部调用配置显式价格，货币成本不可用。",
+          "没有脱敏用户标识，无法计算每名学生成本。"
         ]
       },
       "reasons": [
-        "调用量可追溯；现有报告未记录统一 token 用量与人民币成本，货币成本尚不可用。"
+        "未对全部成功外部调用配置显式价格，货币成本不可用。",
+        "没有脱敏用户标识，无法计算每名学生成本。"
       ]
     }
   ],
@@ -307,10 +324,18 @@
     "embedding_queries": 350,
     "rerank_pairs": 2000,
     "vlm_calls": 0,
-    "external_text_calls": null,
+    "external_text_calls": 2,
+    "input_tokens": 692,
+    "output_tokens": 540,
+    "total_tokens": 1232,
+    "usage_coverage_rate": 1.0,
     "monetary_cost_available": false,
+    "monetary_cost_cny": null,
+    "cost_per_100_materials_cny": null,
+    "cost_per_subject_cny": null,
     "notes": [
-      "调用量可追溯；现有报告未记录统一 token 用量与人民币成本，货币成本尚不可用。"
+      "未对全部成功外部调用配置显式价格，货币成本不可用。",
+      "没有脱敏用户标识，无法计算每名学生成本。"
     ]
   },
   "limitations": [

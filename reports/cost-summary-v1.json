@@ -1,0 +1,51 @@
+{
+  "generated_at": "2026-09-18T13:14:43.346025Z",
+  "source_database": "cost.sqlite",
+  "total_events": 2,
+  "logical_requests": 2,
+  "external_calls": 2,
+  "failed_calls": 1,
+  "cache_hits": 0,
+  "cache_hit_rate": 0.0,
+  "usage_covered_calls": 1,
+  "usage_coverage_rate": 1.0,
+  "input_tokens": 692,
+  "output_tokens": 540,
+  "total_tokens": 1232,
+  "monetary_cost_available": false,
+  "monetary_cost_cny": null,
+  "distinct_materials": 1,
+  "distinct_subjects": 0,
+  "cost_per_100_materials_cny": null,
+  "cost_per_subject_cny": null,
+  "strong_model_calls": 0,
+  "strong_model_ratio": 0.0,
+  "secondary_extraction_calls": 0,
+  "secondary_extraction_ratio": 0.0,
+  "by_model": [
+    {
+      "key": "deepseek-v4-flash",
+      "logical_requests": 2,
+      "external_calls": 2,
+      "input_tokens": 692,
+      "output_tokens": 540,
+      "total_tokens": 1232,
+      "monetary_cost_cny": null
+    }
+  ],
+  "by_purpose": [
+    {
+      "key": "rule_extraction_primary",
+      "logical_requests": 2,
+      "external_calls": 2,
+      "input_tokens": 692,
+      "output_tokens": 540,
+      "total_tokens": 1232,
+      "monetary_cost_cny": null
+    }
+  ],
+  "limitations": [
+    "未对全部成功外部调用配置显式价格，货币成本不可用。",
+    "没有脱敏用户标识，无法计算每名学生成本。"
+  ]
+}

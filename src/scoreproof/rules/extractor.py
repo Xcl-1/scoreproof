@@ -18,6 +18,7 @@ from typing import Any, Literal, Protocol
 from ..config import get_settings
 from ..errors import DataSourceError, SchemaValidationError
 from ..normalize import normalize_academic_year, normalize_level
+from ..observability import CostLedger, classify_model_tier, pricing_from_settings
 from ..schema import ConstraintSpec, Rule, SourceRef
 from .gateway import ExtractionGateway, GatewayContext, GatewayReport, RuleDraftInput, chunk_hash
 
@@ -155,12 +156,18 @@ class LLMExtractor:
         model: str | None = None,
         client: Any = None,
         cache: ExtractionCache | None = None,
+        cost_ledger: CostLedger | None = None,
+        material_id: str | None = None,
+        batch_id: str | None = None,
     ) -> None:
         settings = get_settings()
         self.model = model or settings.llm_model
         self.base_url = settings.llm_base_url
         self.client = client
         self.cache = cache
+        self.cost_ledger = cost_ledger
+        self.material_id = material_id
+        self.batch_id = batch_id
 
     def available(self) -> bool:
         if self.client is not None:
@@ -280,8 +287,48 @@ class LLMExtractor:
                 chunk_hash=digest, model=self.model, variant=cache_variant
             )
             if cached is not None:
+                if self.cost_ledger is not None:
+                    self.cost_ledger.record_cache_hit(
+                        provider="deepseek",
+                        model=self.model,
+                        model_tier=classify_model_tier(self.model),
+                        purpose=(
+                            "rule_extraction_secondary"
+                            if variant != "direct"
+                            else "rule_extraction_primary"
+                        ),
+                        material_id=self.material_id or f"chunk:{digest}",
+                        batch_id=self.batch_id,
+                    )
                 return cached
-        response = self._client_for(temperature=temperature).invoke(messages)
+        purpose = (
+            "rule_extraction_secondary" if variant != "direct" else "rule_extraction_primary"
+        )
+        try:
+            response = self._client_for(temperature=temperature).invoke(messages)
+        except Exception as exc:
+            if self.cost_ledger is not None:
+                self.cost_ledger.record_failure(
+                    provider="deepseek",
+                    model=self.model,
+                    model_tier=classify_model_tier(self.model),
+                    purpose=purpose,
+                    error=exc,
+                    material_id=self.material_id or f"chunk:{digest}",
+                    batch_id=self.batch_id,
+                )
+            raise
+        if self.cost_ledger is not None:
+            self.cost_ledger.record_response(
+                response,
+                provider="deepseek",
+                model=self.model,
+                model_tier=classify_model_tier(self.model),
+                purpose=purpose,
+                material_id=self.material_id or f"chunk:{digest}",
+                batch_id=self.batch_id,
+                pricing=pricing_from_settings(get_settings()),
+            )
         payloads = self._decode_payloads(self._response_text(response))
         if self.cache is not None:
             self.cache.set_extraction_cache(
