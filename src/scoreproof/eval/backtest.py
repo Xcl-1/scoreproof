@@ -18,6 +18,7 @@ import pandas as pd
 from ..calc.engine import EngineConfig, compute_all
 from ..errors import DataSourceError
 from ..schema import Claim, RuleMatch, Ruleset, ScoreBreakdown
+from .gateway import wilson_interval
 
 BacktestMode = Literal["historical_reference", "adjudicated_truth"]
 
@@ -193,14 +194,23 @@ class BacktestReport:
             "person_metric_name": self.person_metric_name,
             "person_exact": self.exact,
             "person_agreement": self.accuracy,
+            "person_agreement_ci95": wilson_interval(self.exact, self.total_students),
             "within_tolerance": self.within_tolerance,
             "agreement_within_tolerance": self.accuracy_within_tolerance,
+            "agreement_within_tolerance_ci95": wilson_interval(
+                self.within_tolerance, self.total_students
+            ),
             "mean_absolute_error": self.mean_absolute_error,
             "max_absolute_error": self.max_absolute_error,
             "total_items": self.total_items,
             "item_metric_name": self.item_metric_name,
             "matched_items": self.matched_items,
             "item_agreement": self.item_agreement,
+            "item_agreement_ci95": (
+                wilson_interval(self.matched_items, self.total_items)
+                if self.total_items
+                else None
+            ),
             "tolerance": self.tolerance,
             "unmatched_claims": self.unmatched_claims,
             "review_claims": self.review_claims,

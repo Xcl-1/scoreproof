@@ -342,9 +342,12 @@ class TestPipelineAndEvaluation:
         ]
         report = evaluate_certificate_fields(labels, predictions, dataset_version="synthetic-v1")
         assert report.micro.f1 == 1.0
+        assert report.micro.precision_ci95[1] == pytest.approx(1.0)
+        assert report.micro.recall_ci95[1] == pytest.approx(1.0)
         assert report.per_field["姓名"].f1 == 1.0
         assert report.exact_certificate_rate == 1.0
         assert report.vlm_trigger_rate == 0.0
+        assert report.vlm_call_ci95[0] == 0.0
         assert report.sample_size == 1
         assert report.smoke_test_only is True and report.formal_gate_eligible is False
         assert report.raw_micro is None and report.raw_labeled_values == 0

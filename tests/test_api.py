@@ -86,6 +86,17 @@ class TestBase:
     def test_openapi(self, client: TestClient) -> None:
         assert client.get("/openapi.json").status_code == 200
 
+    def test_release_readiness_never_promotes_smoke_reports(self, client: TestClient) -> None:
+        response = client.get(
+            "/api/release-readiness", params={"candidate_version": "test-candidate"}
+        )
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["candidate_version"] == "test-candidate"
+        assert payload["ready"] is False
+        assert "certificate_fields" in payload["blocking_gate_ids"]
+        assert "evidence_dedup" in payload["blocking_gate_ids"]
+
 
 class TestCalc:
     def test_calc_returns_traceable_breakdown(self, client: TestClient) -> None:

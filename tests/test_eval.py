@@ -64,6 +64,8 @@ class TestCompareStudents:
         summary = compare_students({"1": 8.0}, {"1": 10.0}).summary()
         for key in ("person_agreement", "person_exact", "total_students", "example_diffs"):
             assert key in summary
+        assert summary["person_agreement_ci95"][0] == 0.0
+        assert summary["person_agreement_ci95"][1] == pytest.approx(0.79345, rel=1e-4)
         assert "准确率" not in summary["person_metric_name"]
 
 
@@ -133,6 +135,7 @@ class TestItemBacktest:
             academic_year="2025-2026"
         )
         assert report.item_agreement == 1.0
+        assert report.summary()["item_agreement_ci95"][1] == 1.0
         assert report.data_complete is True and report.gate_passed is True
         assert report.item_metric_name == "逐项一致率"
 

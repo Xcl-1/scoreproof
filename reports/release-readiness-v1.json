@@ -1,0 +1,320 @@
+{
+  "schema_version": "1.0",
+  "generated_at": "2026-09-18T11:52:44.217459+00:00",
+  "candidate_version": "b11632301cde9d3a746ae436cd5753ad3c51c2d6",
+  "manifest_hash": "719d6b15c15f7fa9f931d6d071091af9d965e101345466eb0d6dc74bb8e08caf",
+  "status": "阻塞",
+  "ready": false,
+  "report_dir": "reports",
+  "artifacts": [
+    {
+      "name": "quality",
+      "path": "quality-gates-v1.json",
+      "exists": true,
+      "sha256": "7755d1dfdf4a9ade20af1a3ed5558e5aa91eaf1c9308eaf045bf6d9a190af363",
+      "valid_json": true,
+      "error": null
+    },
+    {
+      "name": "complex_pdf",
+      "path": "complex-pdf-regression-v1.json",
+      "exists": false,
+      "sha256": null,
+      "valid_json": null,
+      "error": null
+    },
+    {
+      "name": "gateway",
+      "path": "gateway-negative-v2.json",
+      "exists": true,
+      "sha256": "d679279ad4cc843c7632d3f5408c106f87c34e52065bf377983b9438a78abbe1",
+      "valid_json": true,
+      "error": null
+    },
+    {
+      "name": "retrieval",
+      "path": "retrieval-ablation-v1.json",
+      "exists": true,
+      "sha256": "51f99458890ecdffb0fdef91320ba7d2d5b4f3f3d4ee21bd38fd6cab7447482e",
+      "valid_json": true,
+      "error": null
+    },
+    {
+      "name": "citation",
+      "path": "citation-refusal-v1.json",
+      "exists": true,
+      "sha256": "ff11bd6348d04b0da13b4740b69965f6c6dbabb9875db4a9d52b5bc34026cc9e",
+      "valid_json": true,
+      "error": null
+    },
+    {
+      "name": "orchestration",
+      "path": "orchestration-guardrails-v1.json",
+      "exists": true,
+      "sha256": "4abe9d01159cf1cd032037dea5c3ecc8aa60aaad0000bf3cef09629247a69281",
+      "valid_json": true,
+      "error": null
+    },
+    {
+      "name": "certificate",
+      "path": "certificate-fields-formal-v1.json",
+      "exists": false,
+      "sha256": null,
+      "valid_json": null,
+      "error": null
+    },
+    {
+      "name": "certificate_smoke",
+      "path": "certificate-fields-smoke-v1.json",
+      "exists": true,
+      "sha256": "4834cb1faf5761603df2f015e4e02601cdccb10336bcb0b3c973f84aeb0306bf",
+      "valid_json": true,
+      "error": null
+    },
+    {
+      "name": "vlm",
+      "path": "vlm-integration-v1.json",
+      "exists": false,
+      "sha256": null,
+      "valid_json": null,
+      "error": null
+    },
+    {
+      "name": "dedup",
+      "path": "evidence-dedup-formal-v1.json",
+      "exists": false,
+      "sha256": null,
+      "valid_json": null,
+      "error": null
+    },
+    {
+      "name": "dedup_smoke",
+      "path": "evidence-dedup-smoke-v1.json",
+      "exists": true,
+      "sha256": "efce87366dbe8d59db8f2cb02b875f062b502d4032df191c1cb5283194d49cc2",
+      "valid_json": true,
+      "error": null
+    },
+    {
+      "name": "backtest",
+      "path": "backtest-52-v1.json",
+      "exists": false,
+      "sha256": null,
+      "valid_json": null,
+      "error": null
+    },
+    {
+      "name": "user_trial",
+      "path": "user-trial-v1.json",
+      "exists": false,
+      "sha256": null,
+      "valid_json": null,
+      "error": null
+    }
+  ],
+  "gates": [
+    {
+      "id": "quality",
+      "title": "自动化质量门禁与候选冻结",
+      "required": true,
+      "status": "阻塞",
+      "artifact": "quality-gates-v1.json",
+      "sample_size": 391,
+      "metrics": {
+        "git_head": "b11632301cde9d3a746ae436cd5753ad3c51c2d6",
+        "candidate_version_matches": true,
+        "all_checks_passed": true
+      },
+      "reasons": [
+        "工作树不干净，候选版本尚未冻结到提交"
+      ]
+    },
+    {
+      "id": "complex_pdf",
+      "title": "复杂 PDF 版面回归",
+      "required": true,
+      "status": "缺失",
+      "artifact": "complex-pdf-regression-v1.json",
+      "sample_size": null,
+      "metrics": {},
+      "reasons": [
+        "缺少正式产物 complex-pdf-regression-v1.json"
+      ]
+    },
+    {
+      "id": "gateway",
+      "title": "五道验证网关",
+      "required": true,
+      "status": "通过",
+      "artifact": "gateway-negative-v2.json",
+      "sample_size": 100,
+      "metrics": {
+        "detection_rate": 1.0,
+        "has_ci95": true
+      },
+      "reasons": []
+    },
+    {
+      "id": "retrieval_ablation",
+      "title": "A/B/C 三档检索消融",
+      "required": true,
+      "status": "通过",
+      "artifact": "retrieval-ablation-v1.json",
+      "sample_size": 100,
+      "metrics": {
+        "variants": [
+          "A",
+          "B",
+          "C"
+        ],
+        "has_ci95": true
+      },
+      "reasons": []
+    },
+    {
+      "id": "citation_refusal",
+      "title": "引用、拒答与误拒答",
+      "required": true,
+      "status": "通过",
+      "artifact": "citation-refusal-v1.json",
+      "sample_size": 150,
+      "metrics": {
+        "citation_location_accuracy": 0.98,
+        "correct_refusal_rate": 1.0,
+        "false_refusal_rate": 0.0,
+        "has_ci95": true
+      },
+      "reasons": []
+    },
+    {
+      "id": "orchestration",
+      "title": "工具编排与数字护栏",
+      "required": true,
+      "status": "通过",
+      "artifact": "orchestration-guardrails-v1.json",
+      "sample_size": 100,
+      "metrics": {
+        "blocked": 100,
+        "block_rate_ci95": [
+          0.9630065017930143,
+          1.0
+        ],
+        "real_usage_kinds": [
+          "real_cli_entry",
+          "real_external_service",
+          "real_uvicorn_http_entry"
+        ]
+      },
+      "reasons": []
+    },
+    {
+      "id": "certificate_fields",
+      "title": "奖状字段正式评测",
+      "required": true,
+      "status": "仅烟雾",
+      "artifact": "certificate-fields-formal-v1.json",
+      "sample_size": null,
+      "metrics": {},
+      "reasons": [
+        "缺少正式产物 certificate-fields-formal-v1.json",
+        "检测到 n=5 合成烟雾报告，但不能替代正式评测"
+      ]
+    },
+    {
+      "id": "vlm_integration",
+      "title": "真实视觉模型局部兜底",
+      "required": true,
+      "status": "缺失",
+      "artifact": "vlm-integration-v1.json",
+      "sample_size": null,
+      "metrics": {},
+      "reasons": [
+        "缺少正式产物 vlm-integration-v1.json"
+      ]
+    },
+    {
+      "id": "evidence_dedup",
+      "title": "证据查重正式评测",
+      "required": true,
+      "status": "仅烟雾",
+      "artifact": "evidence-dedup-formal-v1.json",
+      "sample_size": null,
+      "metrics": {},
+      "reasons": [
+        "缺少正式产物 evidence-dedup-formal-v1.json",
+        "检测到 n=5 合成变换烟雾报告，但不能替代正式评测"
+      ]
+    },
+    {
+      "id": "backtest_52",
+      "title": "52 人逐项回测与端到端计时",
+      "required": true,
+      "status": "缺失",
+      "artifact": "backtest-52-v1.json",
+      "sample_size": null,
+      "metrics": {},
+      "reasons": [
+        "缺少正式产物 backtest-52-v1.json"
+      ]
+    },
+    {
+      "id": "user_trial",
+      "title": "真实用户试用",
+      "required": true,
+      "status": "缺失",
+      "artifact": "user-trial-v1.json",
+      "sample_size": null,
+      "metrics": {},
+      "reasons": [
+        "缺少正式产物 user-trial-v1.json"
+      ]
+    },
+    {
+      "id": "cost_observability",
+      "title": "成本指标汇总",
+      "required": false,
+      "status": "警告",
+      "artifact": null,
+      "sample_size": null,
+      "metrics": {
+        "embedding_queries": 350,
+        "rerank_pairs": 2000,
+        "vlm_calls": 0,
+        "external_text_calls": null,
+        "monetary_cost_available": false,
+        "notes": [
+          "调用量可追溯；现有报告未记录统一 token 用量与人民币成本，货币成本尚不可用。"
+        ]
+      },
+      "reasons": [
+        "调用量可追溯；现有报告未记录统一 token 用量与人民币成本，货币成本尚不可用。"
+      ]
+    }
+  ],
+  "blocking_gate_ids": [
+    "quality",
+    "complex_pdf",
+    "certificate_fields",
+    "vlm_integration",
+    "evidence_dedup",
+    "backtest_52",
+    "user_trial"
+  ],
+  "warning_gate_ids": [
+    "cost_observability"
+  ],
+  "cost_summary": {
+    "embedding_queries": 350,
+    "rerank_pairs": 2000,
+    "vlm_calls": 0,
+    "external_text_calls": null,
+    "monetary_cost_available": false,
+    "notes": [
+      "调用量可追溯；现有报告未记录统一 token 用量与人民币成本，货币成本尚不可用。"
+    ]
+  },
+  "limitations": [
+    "该审计只认可固定正式报告文件名；smoke 报告永远不能使正式门禁通过。",
+    "阶段 5、6 的缺失真实数据或外部服务结果会保持阻塞，不因进入阶段 7 而豁免。"
+  ]
+}

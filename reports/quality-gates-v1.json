@@ -1,0 +1,76 @@
+{
+  "schema_version": "1.0",
+  "generated_at": "2026-09-18T11:52:35.142361+00:00",
+  "git_head": "b11632301cde9d3a746ae436cd5753ad3c51c2d6",
+  "source_tree_clean": false,
+  "pytest_total": 391,
+  "all_checks_passed": true,
+  "commands": [
+    {
+      "name": "pytest",
+      "command": [
+        "D:\\develop\\Project\\Python\\scoreproof\\.venv\\Scripts\\python.exe",
+        "-m",
+        "pytest"
+      ],
+      "exit_code": 0,
+      "duration_seconds": 13.172,
+      "passed": true,
+      "output_tail": "........................................................................ [ 18%]\n........................................................................ [ 36%]\n........................................................................ [ 55%]\n........................................................................ [ 73%]\n........................................................................ [ 92%]\n...............................                                          [100%]\n391 passed in 11.48s"
+    },
+    {
+      "name": "ruff",
+      "command": [
+        "D:\\develop\\Project\\Python\\scoreproof\\.venv\\Scripts\\python.exe",
+        "-m",
+        "ruff",
+        "check",
+        "src",
+        "tests",
+        "scripts"
+      ],
+      "exit_code": 0,
+      "duration_seconds": 0.794,
+      "passed": true,
+      "output_tail": "All checks passed!"
+    },
+    {
+      "name": "mypy",
+      "command": [
+        "D:\\develop\\Project\\Python\\scoreproof\\.venv\\Scripts\\python.exe",
+        "-m",
+        "mypy",
+        "src"
+      ],
+      "exit_code": 0,
+      "duration_seconds": 0.727,
+      "passed": true,
+      "output_tail": "Success: no issues found in 45 source files"
+    },
+    {
+      "name": "uv_lock",
+      "command": [
+        "D:\\develop\\python312\\Scripts\\uv.EXE",
+        "lock",
+        "--offline",
+        "--check"
+      ],
+      "exit_code": 0,
+      "duration_seconds": 1.684,
+      "passed": true,
+      "output_tail": "Resolved 147 packages in 14ms"
+    },
+    {
+      "name": "git_diff_check",
+      "command": [
+        "D:\\JAVA\\Git\\cmd\\git.EXE",
+        "diff",
+        "--check"
+      ],
+      "exit_code": 0,
+      "duration_seconds": 0.102,
+      "passed": true,
+      "output_tail": "warning: LF will be replaced by CRLF in README.md.\nThe file will have its original line endings in your working directory\nwarning: LF will be replaced by CRLF in src/scoreproof/api/app.py.\nThe file will have its original line endings in your working directory\nwarning: LF will be replaced by CRLF in src/scoreproof/cli.py.\nThe file will have its original line endings in your working directory\nwarning: LF will be replaced by CRLF in src/scoreproof/eval/backtest.py.\nThe file will have its original line endings in your working directory\nwarning: LF will be replaced by CRLF in src/scoreproof/eval/certificate.py.\nThe file will have its original line endings in your working directory\nwarning: LF will be replaced by CRLF in tests/test_api.py.\nThe file will have its original line endings in your working directory\nwarning: LF will be replaced by CRLF in tests/test_certificate.py.\nThe file will have its original line endings in your working directory\nwarning: LF will be replaced by CRLF in tests/test_eval.py.\nThe file will have its original line endings in your working directory\nwarning: LF will be replaced by CRLF in 综测加分核算系统-完整项目计划书-V3.0.md.\nThe file will have its original line endings in your working directory"
+    }
+  ]
+}

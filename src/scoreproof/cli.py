@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import time
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
@@ -17,7 +18,7 @@ from rich.table import Table
 
 from . import __version__
 from .calc.engine import EngineConfig, compute_all
-from .config import get_settings
+from .config import PROJECT_ROOT, get_settings
 from .eval.backtest import (
     item_reference_template,
     load_ground_truth,
@@ -28,6 +29,7 @@ from .eval.certificate import evaluate_certificate_fields, load_jsonl
 from .eval.citation import evaluate_citation_refusal, load_refusal_cases
 from .eval.dedup import evaluate_dedup_pairs, load_dedup_dataset
 from .eval.gateway import GatewayNegativeCase, evaluate_gateway_negatives
+from .eval.readiness import build_release_readiness, run_quality_gates
 from .eval.retrieval import (
     build_ablation_report,
     evaluate_retriever,
@@ -910,6 +912,51 @@ def eval_evidence_dedup_command(
         console.print(f"已写出：{out}")
 
 
+@app.command("quality-gates")
+def quality_gates_command(
+    out: Path = typer.Option(
+        PROJECT_ROOT / "reports" / "quality-gates-v1.json",
+        "--out",
+        help="导出真实质量检查报告",
+    ),
+) -> None:
+    """固定执行 pytest、Ruff、mypy、uv lock 与 git diff 检查。"""
+    report = run_quality_gates(PROJECT_ROOT)
+    encoded = report.model_dump_json(indent=2)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(encoded, encoding="utf-8")
+    console.print_json(encoded)
+    console.print(f"已写出：{out}")
+    if not report.all_checks_passed:
+        raise typer.Exit(code=2)
+    if not report.source_tree_clean:
+        console.print("[yellow]检查通过，但工作树不干净；候选版本尚未冻结。[/yellow]")
+
+
+@app.command("release-readiness")
+def release_readiness_command(
+    candidate_version: str = typer.Option(
+        ..., "--candidate-version", help="待冻结的 Git 提交或版本标识"
+    ),
+    report_dir: Path = typer.Option(PROJECT_ROOT / "reports", "--report-dir"),
+    out: Path = typer.Option(
+        PROJECT_ROOT / "reports" / "release-readiness-v1.json",
+        "--out",
+    ),
+    enforce: bool = typer.Option(True, "--enforce/--no-enforce", help="阻塞时以退出码 2 结束"),
+) -> None:
+    """汇总固定评测产物，烟雾结果不能使正式 RC 门禁通过。"""
+    report = build_release_readiness(report_dir, candidate_version=candidate_version)
+    encoded = report.model_dump_json(indent=2)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(encoded, encoding="utf-8")
+    console.print_json(encoded)
+    console.print(f"已写出：{out}")
+    if enforce and not report.ready:
+        console.print(f"[red]RC 阻塞：{', '.join(report.blocking_gate_ids)}[/red]")
+        raise typer.Exit(code=2)
+
+
 # ======================================================================
 # 核算
 # ======================================================================
@@ -1174,6 +1221,7 @@ def backtest(
     db: Path | None = typer.Option(None, "--db"),
 ) -> None:
     """执行逐人、逐项回测；无业务裁决时只报告与历史人工结果的一致性。"""
+    started = time.perf_counter()
     normalized_mode = mode.strip().lower().replace("-", "_")
     if normalized_mode not in {"historical_reference", "adjudicated_truth"}:
         raise typer.BadParameter("--mode 只能是 historical-reference 或 adjudicated-truth")
@@ -1211,6 +1259,7 @@ def backtest(
         "totals": _file_sha256(truth),
         **({"items": _file_sha256(item_reference)} if item_reference else {}),
     }
+    report.meta["elapsed_seconds"] = round(time.perf_counter() - started, 6)
     summary = report.summary()
     console.print_json(json.dumps(summary, ensure_ascii=False))
     console.print(

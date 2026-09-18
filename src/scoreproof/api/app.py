@@ -22,8 +22,9 @@ from pydantic import BaseModel, Field
 
 from .. import __version__
 from ..calc.engine import EngineConfig, compute_claims
-from ..config import get_settings
+from ..config import PROJECT_ROOT, get_settings
 from ..errors import ScoreProofError
+from ..eval.readiness import build_release_readiness
 from ..evidence.certificate import extract_certificate as run_certificate_extraction
 from ..evidence.consistency import ConsistencyPolicy, compare_claim_evidence
 from ..evidence.dedup import DuplicateThresholds, compare_evidence, fact_fingerprint
@@ -247,6 +248,14 @@ def create_app() -> FastAPI:
     @app.get("/api/config", tags=["base"])
     def read_config() -> dict:
         return get_state().settings.safe_repr()
+
+    @app.get("/api/release-readiness", tags=["base"])
+    def release_readiness(candidate_version: str = __version__) -> dict:
+        """只读汇总固定评测报告；缺失正式数据时明确返回阻塞。"""
+        return build_release_readiness(
+            PROJECT_ROOT / "reports",
+            candidate_version=candidate_version,
+        ).model_dump(mode="json")
 
     # ---------------- 规则库 ----------------
 

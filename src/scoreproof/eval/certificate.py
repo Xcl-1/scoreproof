@@ -22,7 +22,9 @@ class FieldMetric(BaseModel):
     false_positive: int = 0
     false_negative: int = 0
     precision: float = 0.0
+    precision_ci95: tuple[float, float] = (0.0, 0.0)
     recall: float = 0.0
+    recall_ci95: tuple[float, float] = (0.0, 0.0)
     f1: float = 0.0
 
 
@@ -45,6 +47,7 @@ class CertificateEvaluationReport(BaseModel):
     raw_complete_samples: int = 0
     raw_exact_certificates: int = 0
     raw_exact_certificate_rate: float | None = None
+    raw_exact_certificate_ci95: tuple[float, float] | None = None
     exact_certificates: int
     exact_certificate_rate: float
     exact_certificate_ci95: tuple[float, float]
@@ -53,6 +56,7 @@ class CertificateEvaluationReport(BaseModel):
     vlm_trigger_ci95: tuple[float, float]
     vlm_called: int
     vlm_call_rate: float
+    vlm_call_ci95: tuple[float, float]
     notes: list[str] = Field(default_factory=list)
 
 
@@ -65,7 +69,9 @@ def _metric(tp: int, fp: int, fn: int) -> FieldMetric:
         false_positive=fp,
         false_negative=fn,
         precision=round(precision, 4),
+        precision_ci95=wilson_interval(tp, tp + fp),
         recall=round(recall, 4),
+        recall_ci95=wilson_interval(tp, tp + fn),
         f1=round(f1, 4),
     )
 
@@ -269,6 +275,9 @@ def evaluate_certificate_fields(
         raw_complete_samples=raw_complete,
         raw_exact_certificates=raw_exact,
         raw_exact_certificate_rate=(round(raw_exact / raw_complete, 4) if raw_complete else None),
+        raw_exact_certificate_ci95=(
+            wilson_interval(raw_exact, raw_complete) if raw_complete else None
+        ),
         exact_certificates=exact,
         exact_certificate_rate=round(exact / n, 4) if n else 0.0,
         exact_certificate_ci95=wilson_interval(exact, n),
@@ -277,6 +286,7 @@ def evaluate_certificate_fields(
         vlm_trigger_ci95=wilson_interval(triggered, n),
         vlm_called=called,
         vlm_call_rate=round(called / n, 4) if n else 0.0,
+        vlm_call_ci95=wilson_interval(called, n),
         notes=notes,
     )
 
