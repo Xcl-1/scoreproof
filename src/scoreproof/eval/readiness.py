@@ -491,6 +491,59 @@ def _simple_real_gate(
     )
 
 
+def _user_trial_gate(payload: dict[str, Any] | None, filename: str) -> ReadinessGate:
+    if payload is None:
+        return _missing_gate("user_trial", "真实用户试用", filename)
+    sample = int(_number(payload, "sample_size") or 0)
+    sessions = int(_number(payload, "session_count") or 0)
+    success = payload.get("task_success_rate")
+    has_success_interval = (
+        isinstance(success, dict)
+        and _number(success, "value") is not None
+        and isinstance(success.get("ci95"), list)
+        and len(success["ci95"]) == 2
+    )
+    source_hash = payload.get("source_sha256")
+    passed = bool(
+        payload.get("formal_gate_eligible")
+        and payload.get("real_users")
+        and payload.get("consent_verified")
+        and payload.get("authorization_verified")
+        and payload.get("independent_real_users")
+        and sample > 0
+        and sessions >= sample
+        and has_success_interval
+        and _number(payload, "duration_p50_seconds") is not None
+        and _number(payload, "duration_p90_seconds") is not None
+        and isinstance(source_hash, str)
+        and re.fullmatch(r"[0-9a-f]{64}", source_hash)
+    )
+    return ReadinessGate(
+        id="user_trial",
+        title="真实用户试用",
+        required=True,
+        status="通过" if passed else "阻塞",
+        artifact=filename,
+        sample_size=sample,
+        metrics={
+            "session_count": sessions,
+            "real_users": bool(payload.get("real_users")),
+            "consent_verified": bool(payload.get("consent_verified")),
+            "independent_real_users": bool(payload.get("independent_real_users")),
+            "task_success_rate": success,
+            "duration_p50_seconds": _number(payload, "duration_p50_seconds"),
+            "duration_p90_seconds": _number(payload, "duration_p90_seconds"),
+        },
+        reasons=(
+            []
+            if passed
+            else [
+                "要求已授权独立真实用户、去重样本、数据 Hash、任务成功率区间及 P50/P90 耗时"
+            ]
+        ),
+    )
+
+
 def _cost_summary(payloads: Mapping[str, dict[str, Any] | None]) -> CostSummary:
     embedding_queries = rerank_pairs = vlm_calls = 0
     retrieval = payloads.get("retrieval")
@@ -612,18 +665,7 @@ def build_release_readiness(
             ),
             failure_reason="要求 52 人数据完整门禁通过并记录真实端到端耗时",
         ),
-        _simple_real_gate(
-            payloads["user_trial"],
-            gate_id="user_trial",
-            title="真实用户试用",
-            filename=filenames["user_trial"],
-            validator=lambda value: (
-                bool(value.get("real_users")) and int(_number(value, "sample_size") or 0) > 0,
-                int(_number(value, "sample_size") or 0),
-                {"real_users": bool(value.get("real_users"))},
-            ),
-            failure_reason="至少需要一次有记录、已授权的真实用户试用",
-        ),
+        _user_trial_gate(payloads["user_trial"], filenames["user_trial"]),
     ]
     cost = _cost_summary(payloads)
     gates.append(

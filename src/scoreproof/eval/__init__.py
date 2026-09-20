@@ -41,6 +41,15 @@ from .retrieval import (
     evaluate_retriever,
     load_retrieval_cases,
 )
+from .user_trial import (
+    TrialSession,
+    UserTrialDataset,
+    UserTrialReport,
+    evaluate_user_trials,
+    load_user_trial_dataset,
+    new_participant_token,
+    user_trial_template,
+)
 
 __all__ = [
     "BacktestMode",
@@ -58,6 +67,9 @@ __all__ = [
     "RetrievalCase",
     "RetrievalVariantReport",
     "StudentResult",
+    "TrialSession",
+    "UserTrialDataset",
+    "UserTrialReport",
     "build_ablation_report",
     "claim_item_key",
     "compare_items",
@@ -66,12 +78,16 @@ __all__ = [
     "evaluate_certificate_fields",
     "evaluate_gateway_negatives",
     "evaluate_retriever",
+    "evaluate_user_trials",
     "item_reference_template",
     "load_ground_truth",
     "load_jsonl",
     "load_item_expectations",
     "load_refusal_cases",
     "load_retrieval_cases",
+    "load_user_trial_dataset",
+    "new_participant_token",
     "run_backtest",
+    "user_trial_template",
     "wilson_interval",
 ]

@@ -89,6 +89,16 @@ class TestBase:
         assert body["external_calls"] == 0
         assert "by_model" in body
 
+    def test_user_trial_api_template_stays_blocked(self, client: TestClient) -> None:
+        template = client.get("/api/eval/user-trial/template")
+        assert template.status_code == 200
+        assert template.json()["sessions"] == []
+        evaluated = client.post("/api/eval/user-trial", json=template.json())
+        assert evaluated.status_code == 200
+        body = evaluated.json()
+        assert body["sample_size"] == 0
+        assert body["formal_gate_eligible"] is False
+
     def test_index_page(self, client: TestClient) -> None:
         assert "scoreproof" in client.get("/").text
 

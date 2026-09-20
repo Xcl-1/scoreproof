@@ -35,6 +35,12 @@ from .eval.retrieval import (
     evaluate_retriever,
     load_retrieval_cases,
 )
+from .eval.user_trial import (
+    evaluate_user_trials,
+    load_user_trial_dataset,
+    new_participant_token,
+    user_trial_template,
+)
 from .evidence.certificate import extract_certificate
 from .evidence.consistency import ConsistencyPolicy, compare_claim_evidence
 from .evidence.dedup import DuplicateThresholds, compare_evidence
@@ -991,6 +997,42 @@ def cost_report_command(
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(encoded, encoding="utf-8")
         console.print(f"已写出：{out}")
+
+
+@app.command("new-trial-participant")
+def new_trial_participant_command() -> None:
+    """生成不携带真实身份信息的随机试用参与者令牌。"""
+    console.print(new_participant_token())
+
+
+@app.command("export-user-trial-template")
+def export_user_trial_template_command(
+    out: Path = typer.Option(..., "--out", help="空试用数据集 JSON"),
+) -> None:
+    """导出默认不能通过正式门禁的空模板。"""
+    out.parent.mkdir(parents=True, exist_ok=True)
+    encoded = user_trial_template().model_dump_json(indent=2)
+    out.write_text(encoded, encoding="utf-8")
+    console.print(f"已写出：{out}")
+    console.print("[yellow]空模板不是实际用户记录，不能通过真实用户试用门禁。[/yellow]")
+
+
+@app.command("eval-user-trial")
+def eval_user_trial_command(
+    dataset: Path = typer.Argument(..., exists=True, dir_okay=False, help="已授权试用数据集"),
+    out: Path | None = typer.Option(None, "--out", help="保存试用评测报告 JSON"),
+) -> None:
+    """评测去重用户数、成功率、核验率、人工复核率及 P50/P90 耗时。"""
+    report = evaluate_user_trials(load_user_trial_dataset(dataset))
+    encoded = report.model_dump_json(indent=2)
+    console.print_json(encoded)
+    if out:
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(encoded, encoding="utf-8")
+        console.print(f"已写出：{out}")
+    if not report.formal_gate_eligible:
+        console.print("[yellow]未通过真实用户门禁；不得作为阶段 7 正式验收。[/yellow]")
+        raise typer.Exit(code=2)
 
 
 # ======================================================================

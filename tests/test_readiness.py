@@ -143,6 +143,33 @@ class TestReleaseReadiness:
         gate = next(item for item in report.gates if item.id == "evidence_dedup")
         assert gate.status == "通过"
 
+    def test_user_trial_requires_consent_hash_intervals_and_latency(self, tmp_path: Path) -> None:
+        _write(
+            tmp_path / "user-trial-v1.json",
+            {
+                "sample_size": 2,
+                "session_count": 2,
+                "formal_gate_eligible": True,
+                "real_users": True,
+                "consent_verified": True,
+                "authorization_verified": True,
+                "independent_real_users": True,
+                "source_sha256": "a" * 64,
+                "task_success_rate": {
+                    "successes": 2,
+                    "total": 2,
+                    "value": 1.0,
+                    "ci95": [0.34238, 1.0],
+                },
+                "duration_p50_seconds": 60.0,
+                "duration_p90_seconds": 90.0,
+            },
+        )
+        report = build_release_readiness(tmp_path, candidate_version="candidate")
+        gate = next(item for item in report.gates if item.id == "user_trial")
+        assert gate.status == "通过"
+        assert gate.sample_size == 2
+
     def test_invalid_json_is_snapshotted_and_cannot_pass(self, tmp_path: Path) -> None:
         (tmp_path / "gateway-negative-v2.json").write_text("not-json", encoding="utf-8")
         report = build_release_readiness(tmp_path, candidate_version="candidate")

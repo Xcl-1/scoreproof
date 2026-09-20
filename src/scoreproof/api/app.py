@@ -25,6 +25,7 @@ from ..calc.engine import EngineConfig, compute_claims
 from ..config import PROJECT_ROOT, get_settings
 from ..errors import ScoreProofError
 from ..eval.readiness import build_release_readiness
+from ..eval.user_trial import UserTrialDataset, evaluate_user_trials, user_trial_template
 from ..evidence.certificate import extract_certificate as run_certificate_extraction
 from ..evidence.consistency import ConsistencyPolicy, compare_claim_evidence
 from ..evidence.dedup import DuplicateThresholds, compare_evidence, fact_fingerprint
@@ -264,6 +265,16 @@ def create_app() -> FastAPI:
         settings = get_state().settings
         with CostLedger(settings.cost_db_path) as ledger:
             return ledger.report().model_dump(mode="json")
+
+    @app.get("/api/eval/user-trial/template", tags=["evaluation"])
+    def user_trial_dataset_template() -> dict:
+        """返回显式不可通过正式门禁的空试用模板。"""
+        return user_trial_template().model_dump(mode="json")
+
+    @app.post("/api/eval/user-trial", tags=["evaluation"])
+    def evaluate_user_trial_api(dataset: UserTrialDataset) -> dict:
+        """评测已授权试用元数据；接口不接收姓名、学号、材料或自由文本。"""
+        return evaluate_user_trials(dataset).model_dump(mode="json")
 
     # ---------------- 规则库 ----------------
 
@@ -651,6 +662,7 @@ _INDEX_HTML = """<!doctype html>
  <li><code>POST /api/citation-check</code> — 核查真实索引引用并给出人工确认/拒答分支</li>
  <li><code>POST /api/refusal-check</code> — 未找到规则时是否正确拒答</li>
  <li><code>POST /api/agent</code> — 工具编排、结构化核算与数字/引用门禁</li>
+ <li><code>GET/POST /api/eval/user-trial</code> — 无 PII 的试用模板与正式门禁评测</li>
 </ul>
 </body></html>"""
 

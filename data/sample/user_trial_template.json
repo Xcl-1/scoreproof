@@ -1,0 +1,9 @@
+{
+  "dataset_version": "user-trial-v1",
+  "protocol_version": "scoreproof-user-trial-v1",
+  "collector_role": "authorized_operator",
+  "authorization_reference": null,
+  "consent_document_version": null,
+  "independent_real_users": false,
+  "sessions": []
+}
