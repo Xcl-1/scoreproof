@@ -19,6 +19,7 @@ from fastapi.testclient import TestClient  # noqa: E402
 
 from scoreproof.api.app import app, get_state  # noqa: E402
 from scoreproof.indexing import DocumentChunk, HybridIndexManifestStore  # noqa: E402
+from scoreproof.rules.gateway import ExtractionGateway  # noqa: E402
 from scoreproof.schema import (  # noqa: E402
     Evidence,
     Ruleset,
@@ -97,6 +98,66 @@ class TestBase:
         assert evaluated.status_code == 200
         body = evaluated.json()
         assert body["sample_size"] == 0
+        assert body["formal_gate_eligible"] is False
+
+    def test_rule_extraction_eval_api_keeps_synthetic_sample_as_smoke(
+        self,
+        client: TestClient,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        api_module = importlib.import_module("scoreproof.api.app")
+
+        class FakeExtractor:
+            model = "fake-rule-model"
+
+            def __init__(self, **_: object) -> None:
+                pass
+
+            def available(self) -> bool:
+                return False
+
+            def extract_validated(self, text: str, **kwargs: object):
+                return ExtractionGateway().validate_batch(
+                    [
+                        {
+                            "category": "学科竞赛",
+                            "level": "省级一等奖",
+                            "score": 3.0,
+                            "evidence_quote": text,
+                        }
+                    ],
+                    source_text=text,
+                    context=kwargs["context"],
+                )
+
+        monkeypatch.setattr(api_module, "LLMExtractor", FakeExtractor)
+        payload = {
+            "dataset_version": "api-smoke",
+            "cases": [
+                {
+                    "case_id": "api-1",
+                    "source_id": "synthetic-rule-1",
+                    "source_text": "省级一等奖计3分。",
+                    "academic_year": "2025-2026",
+                    "category_hint": "学科竞赛",
+                    "real_source": False,
+                    "synthetic": True,
+                    "expected_rules": [
+                        {
+                            "category": "学科竞赛",
+                            "level": "省级一等奖",
+                            "score": 3.0,
+                            "evidence_quote": "省级一等奖计3分。",
+                        }
+                    ],
+                }
+            ],
+        }
+        response = client.post("/api/eval/rule-extraction", json=payload)
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["exact_rule_accuracy"]["value"] == 1.0
+        assert body["smoke_test_only"] is True
         assert body["formal_gate_eligible"] is False
 
     def test_index_page(self, client: TestClient) -> None:

@@ -7,6 +7,7 @@ data/processed/
 data/sample/*
 !data/sample/user_trial_template.json
 !data/sample/complex_pdf_regression_template.json
+!data/sample/rule_extraction_template.json
 data/tmp/
 data/models/
 !data/raw/.gitkeep

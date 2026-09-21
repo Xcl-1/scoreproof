@@ -1,0 +1,31 @@
+{
+  "dataset_version": "synthetic-rule-extraction-smoke-v1",
+  "authorization_reference": null,
+  "independent_real_samples": false,
+  "cases": [
+    {
+      "case_id": "synthetic-rule-001",
+      "source_id": "synthetic-clear-rule-001",
+      "source_text": "学科竞赛：省级一等奖，个人项目计3分。",
+      "academic_year": "2025-2026",
+      "category_hint": "学科竞赛",
+      "real_source": false,
+      "synthetic": true,
+      "expected_rules": [
+        {
+          "category": "学科竞赛",
+          "level": "省级一等奖",
+          "score": 3.0,
+          "synonyms": [],
+          "cap": null,
+          "team_factor": null,
+          "clause": null,
+          "evidence_quote": "学科竞赛：省级一等奖，个人项目计3分。",
+          "rank": null,
+          "item_name": null,
+          "effective_date": null
+        }
+      ]
+    }
+  ]
+}

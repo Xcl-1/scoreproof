@@ -25,6 +25,7 @@ from ..calc.engine import EngineConfig, compute_claims
 from ..config import PROJECT_ROOT, get_settings
 from ..errors import ScoreProofError
 from ..eval.readiness import build_release_readiness
+from ..eval.rule_extraction import RuleExtractionDataset, evaluate_rule_extraction
 from ..eval.user_trial import UserTrialDataset, evaluate_user_trials, user_trial_template
 from ..evidence.certificate import extract_certificate as run_certificate_extraction
 from ..evidence.consistency import ConsistencyPolicy, compare_claim_evidence
@@ -37,6 +38,7 @@ from ..retrieval.hybrid import HybridRetriever
 from ..retrieval.query import rewrite_retrieval_query
 from ..retrieval.rerank import FastEmbedReranker, RerankingRetriever
 from ..retrieval.router import Retriever, Router
+from ..rules.extractor import LLMExtractor
 from ..rules.store import RuleStore
 from ..schema import Claim, Evidence, Ruleset
 
@@ -275,6 +277,28 @@ def create_app() -> FastAPI:
     def evaluate_user_trial_api(dataset: UserTrialDataset) -> dict:
         """评测已授权试用元数据；接口不接收姓名、学号、材料或自由文本。"""
         return evaluate_user_trials(dataset).model_dump(mode="json")
+
+    @app.post("/api/eval/rule-extraction", tags=["evaluation"])
+    def evaluate_rule_extraction_api(
+        dataset: RuleExtractionDataset,
+        force_double_check: bool = False,
+    ) -> dict:
+        """使用真实 DeepSeek 文本模型评测规则抽取；结果仍必须经过五道网关。"""
+        settings = get_state().settings
+        with CostLedger(settings.cost_db_path) as ledger:
+            extractor = LLMExtractor(
+                cache=None,
+                cost_ledger=ledger,
+                material_id=f"rule-eval-api:{dataset.dataset_version}",
+                batch_id=f"rule-eval-api:{uuid.uuid4().hex}",
+            )
+            return evaluate_rule_extraction(
+                dataset,
+                extractor=extractor,
+                provider="deepseek",
+                real_external_service=extractor.available(),
+                force_double_check=force_double_check,
+            ).model_dump(mode="json")
 
     # ---------------- 规则库 ----------------
 

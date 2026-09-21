@@ -1,20 +1,20 @@
 {
-  "generated_at": "2026-09-18T13:14:43.346025Z",
-  "source_database": "cost.sqlite",
-  "total_events": 2,
-  "logical_requests": 2,
-  "external_calls": 2,
+  "generated_at": "2026-09-21T13:19:33.787616Z",
+  "source_database": "rules.sqlite",
+  "total_events": 15,
+  "logical_requests": 15,
+  "external_calls": 15,
   "failed_calls": 1,
   "cache_hits": 0,
   "cache_hit_rate": 0.0,
-  "usage_covered_calls": 1,
-  "usage_coverage_rate": 1.0,
-  "input_tokens": 692,
-  "output_tokens": 540,
-  "total_tokens": 1232,
+  "usage_covered_calls": 2,
+  "usage_coverage_rate": 0.142857,
+  "input_tokens": 1388,
+  "output_tokens": 416,
+  "total_tokens": 1804,
   "monetary_cost_available": false,
   "monetary_cost_cny": null,
-  "distinct_materials": 1,
+  "distinct_materials": 2,
   "distinct_subjects": 0,
   "cost_per_100_materials_cny": null,
   "cost_per_subject_cny": null,
@@ -25,26 +25,36 @@
   "by_model": [
     {
       "key": "deepseek-v4-flash",
-      "logical_requests": 2,
-      "external_calls": 2,
-      "input_tokens": 692,
-      "output_tokens": 540,
-      "total_tokens": 1232,
+      "logical_requests": 15,
+      "external_calls": 15,
+      "input_tokens": 1388,
+      "output_tokens": 416,
+      "total_tokens": 1804,
       "monetary_cost_cny": null
     }
   ],
   "by_purpose": [
     {
+      "key": "certificate_text_extraction",
+      "logical_requests": 12,
+      "external_calls": 12,
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "total_tokens": 0,
+      "monetary_cost_cny": null
+    },
+    {
       "key": "rule_extraction_primary",
-      "logical_requests": 2,
-      "external_calls": 2,
-      "input_tokens": 692,
-      "output_tokens": 540,
-      "total_tokens": 1232,
+      "logical_requests": 3,
+      "external_calls": 3,
+      "input_tokens": 1388,
+      "output_tokens": 416,
+      "total_tokens": 1804,
       "monetary_cost_cny": null
     }
   ],
   "limitations": [
+    "部分成功外部调用未返回 token usage，token 汇总不完整。",
     "未对全部成功外部调用配置显式价格，货币成本不可用。",
     "没有脱敏用户标识，无法计算每名学生成本。"
   ]

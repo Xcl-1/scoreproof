@@ -39,6 +39,10 @@ from .eval.retrieval import (
     evaluate_retriever,
     load_retrieval_cases,
 )
+from .eval.rule_extraction import (
+    evaluate_rule_extraction,
+    load_rule_extraction_dataset,
+)
 from .eval.user_trial import (
     evaluate_user_trials,
     load_user_trial_dataset,
@@ -1352,6 +1356,51 @@ def eval_extraction_gateway(
         result.detection_rate < 0.99 for result in report.target_results.values()
     )
     if report.detection_rate < 0.99 or target_failed:
+        raise typer.Exit(code=2)
+
+
+@app.command("eval-rule-extraction")
+def eval_rule_extraction_command(
+    dataset: Path = typer.Argument(..., exists=True, help="规则抽取人工金标数据集 JSON"),
+    out: Path = typer.Option(
+        PROJECT_ROOT / "reports" / "rule-extraction-smoke-v1.json",
+        "--out",
+        help="评测报告 JSON",
+    ),
+    double_check: bool = typer.Option(
+        False,
+        "--double-check",
+        help="强制每个原文块使用第二种提示复核；会增加真实模型调用",
+    ),
+    enforce: bool = typer.Option(
+        True,
+        "--enforce/--no-enforce",
+        help="默认要求 n≥50 独立真实授权金标且完整规则准确率≥96%",
+    ),
+) -> None:
+    """调用真实文本模型，评测通过五道网关后的规则字段完整正确率。"""
+    source = load_rule_extraction_dataset(dataset)
+    settings = get_settings()
+    with CostLedger(settings.cost_db_path) as ledger:
+        extractor = LLMExtractor(
+            cache=None,
+            cost_ledger=ledger,
+            material_id=f"dataset:{_file_sha256(dataset)}",
+            batch_id=f"rule-eval:{uuid.uuid4().hex}",
+        )
+        report = evaluate_rule_extraction(
+            source,
+            extractor=extractor,
+            provider="deepseek",
+            real_external_service=extractor.available(),
+            force_double_check=double_check,
+        )
+    encoded = report.model_dump_json(indent=2)
+    console.print_json(encoded)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(encoded, encoding="utf-8")
+    console.print(f"已写出：{out}")
+    if enforce and not report.passed:
         raise typer.Exit(code=2)
 
 

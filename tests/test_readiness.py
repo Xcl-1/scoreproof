@@ -40,6 +40,7 @@ def _copy_existing_reports(target: Path) -> None:
         "citation-refusal-v1.json",
         "orchestration-guardrails-v1.json",
         "complex-pdf-regression-v1.json",
+        "rule-extraction-smoke-v1.json",
         "certificate-fields-smoke-v1.json",
         "evidence-dedup-smoke-v1.json",
         "cost-summary-v1.json",
@@ -98,15 +99,20 @@ class TestReleaseReadiness:
         assert statuses["citation_refusal"] == "通过"
         assert statuses["orchestration"] == "通过"
         assert statuses["complex_pdf"] == "仅烟雾"
+        assert statuses["rule_extraction"] == "仅烟雾"
         assert statuses["certificate_fields"] == "仅烟雾"
         assert statuses["evidence_dedup"] == "仅烟雾"
         assert report.ready is False
         assert report.status == "阻塞"
         assert "backtest_52" in report.blocking_gate_ids
         assert "cost_observability" in report.warning_gate_ids
-        assert report.cost_summary.total_tokens == 1232
-        assert report.cost_summary.usage_coverage_rate == 1.0
-        assert report.cost_summary.monetary_cost_available is False
+        stored_cost = json.loads((tmp_path / "cost-summary-v1.json").read_text(encoding="utf-8"))
+        assert report.cost_summary.total_tokens == stored_cost["total_tokens"]
+        assert report.cost_summary.usage_coverage_rate == stored_cost["usage_coverage_rate"]
+        assert (
+            report.cost_summary.monetary_cost_available
+            is stored_cost["monetary_cost_available"]
+        )
 
     def test_dirty_worktree_blocks_candidate_freeze(self, tmp_path: Path) -> None:
         _write(tmp_path / "quality-gates-v1.json", _quality(clean=False))
@@ -144,6 +150,101 @@ class TestReleaseReadiness:
         report = build_release_readiness(tmp_path, candidate_version="candidate")
         gate = next(item for item in report.gates if item.id == "evidence_dedup")
         assert gate.status == "通过"
+
+    def test_formal_rule_extraction_requires_strict_report_and_n50(self, tmp_path: Path) -> None:
+        smoke = json.loads(
+            (Path(__file__).resolve().parents[1] / "reports" / "rule-extraction-smoke-v1.json")
+            .read_text(encoding="utf-8")
+        )
+        base_result = smoke["results"][0]
+        smoke.update(
+            {
+                "dataset_version": "formal-rules-v1",
+                "source_sha256": "f" * 64,
+                "sample_size": 50,
+                "scored_rule_units": 50,
+                "case_count": 50,
+                "real_sources": True,
+                "authorization_verified": True,
+                "independent_real_samples": True,
+                "real_external_service": True,
+                "exact_rule_accuracy": {
+                    "correct": 50,
+                    "total": 50,
+                    "value": 1.0,
+                    "ci95": [0.9286524009, 1.0],
+                },
+                "field_micro_accuracy": {
+                    "correct": 550,
+                    "total": 550,
+                    "value": 1.0,
+                    "ci95": [0.993064, 1.0],
+                },
+                "field_micro_prf": {
+                    "true_positive": 200,
+                    "false_positive": 0,
+                    "false_negative": 0,
+                    "precision": 1.0,
+                    "recall": 1.0,
+                    "f1": 1.0,
+                    "precision_ci95": [0.981154, 1.0],
+                    "recall_ci95": [0.981154, 1.0],
+                },
+                "complete_case_accuracy": {
+                    "correct": 50,
+                    "total": 50,
+                    "value": 1.0,
+                    "ci95": [0.9286524009, 1.0],
+                },
+                "formal_gate_eligible": True,
+                "passed": True,
+                "smoke_test_only": False,
+                "limitations": [],
+            }
+        )
+        for metric in smoke["field_metrics"].values():
+            metric.update(correct=50, total=50, value=1.0, ci95=[0.9286524009, 1.0])
+        for metric in smoke["field_prf"].values():
+            if metric["true_positive"]:
+                metric.update(
+                    true_positive=50,
+                    precision_ci95=[0.9286524009, 1.0],
+                    recall_ci95=[0.9286524009, 1.0],
+                )
+        smoke["results"] = [
+            {
+                **base_result,
+                "case_id": f"case-{index}",
+                "source_id": f"source-{index}",
+                "source_sha256": f"{index:064x}",
+            }
+            for index in range(50)
+        ]
+        _write(tmp_path / "rule-extraction-formal-v1.json", smoke)
+        report = build_release_readiness(tmp_path, candidate_version="candidate")
+        gate = next(item for item in report.gates if item.id == "rule_extraction")
+        assert gate.status == "通过"
+        assert gate.sample_size == 50
+
+    def test_forged_rule_extraction_counts_cannot_pass(self, tmp_path: Path) -> None:
+        smoke = json.loads(
+            (Path(__file__).resolve().parents[1] / "reports" / "rule-extraction-smoke-v1.json")
+            .read_text(encoding="utf-8")
+        )
+        smoke.update(
+            sample_size=50,
+            formal_gate_eligible=True,
+            passed=True,
+            smoke_test_only=False,
+            real_sources=True,
+            authorization_verified=True,
+            independent_real_samples=True,
+        )
+        _write(tmp_path / "rule-extraction-formal-v1.json", smoke)
+        report = build_release_readiness(tmp_path, candidate_version="candidate")
+        gate = next(item for item in report.gates if item.id == "rule_extraction")
+        assert gate.status == "阻塞"
+        assert any("Schema 无效" in reason for reason in gate.reasons)
 
     def test_user_trial_requires_consent_hash_intervals_and_latency(self, tmp_path: Path) -> None:
         _write(

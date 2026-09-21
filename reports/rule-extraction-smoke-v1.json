@@ -1,0 +1,383 @@
+{
+  "schema_version": "1.0",
+  "dataset_version": "synthetic-rule-extraction-smoke-v1",
+  "source_sha256": "f000b1fd4159ef991b0ab16d329764c46651a61068fcafaa1f1fb3171df81411",
+  "provider": "deepseek",
+  "model": "deepseek-v4-flash",
+  "sample_size": 1,
+  "scored_rule_units": 1,
+  "case_count": 1,
+  "real_sources": false,
+  "authorization_verified": false,
+  "independent_real_samples": false,
+  "real_external_service": true,
+  "exact_rule_accuracy": {
+    "correct": 1,
+    "total": 1,
+    "value": 1.0,
+    "ci95": [
+      0.2065493143772375,
+      1.0
+    ]
+  },
+  "field_micro_accuracy": {
+    "correct": 11,
+    "total": 11,
+    "value": 1.0,
+    "ci95": [
+      0.7411670330319684,
+      1.0
+    ]
+  },
+  "field_metrics": {
+    "category": {
+      "correct": 1,
+      "total": 1,
+      "value": 1.0,
+      "ci95": [
+        0.2065493143772375,
+        1.0
+      ]
+    },
+    "level": {
+      "correct": 1,
+      "total": 1,
+      "value": 1.0,
+      "ci95": [
+        0.2065493143772375,
+        1.0
+      ]
+    },
+    "score": {
+      "correct": 1,
+      "total": 1,
+      "value": 1.0,
+      "ci95": [
+        0.2065493143772375,
+        1.0
+      ]
+    },
+    "synonyms": {
+      "correct": 1,
+      "total": 1,
+      "value": 1.0,
+      "ci95": [
+        0.2065493143772375,
+        1.0
+      ]
+    },
+    "cap": {
+      "correct": 1,
+      "total": 1,
+      "value": 1.0,
+      "ci95": [
+        0.2065493143772375,
+        1.0
+      ]
+    },
+    "team_factor": {
+      "correct": 1,
+      "total": 1,
+      "value": 1.0,
+      "ci95": [
+        0.2065493143772375,
+        1.0
+      ]
+    },
+    "clause": {
+      "correct": 1,
+      "total": 1,
+      "value": 1.0,
+      "ci95": [
+        0.2065493143772375,
+        1.0
+      ]
+    },
+    "evidence_quote": {
+      "correct": 1,
+      "total": 1,
+      "value": 1.0,
+      "ci95": [
+        0.2065493143772375,
+        1.0
+      ]
+    },
+    "rank": {
+      "correct": 1,
+      "total": 1,
+      "value": 1.0,
+      "ci95": [
+        0.2065493143772375,
+        1.0
+      ]
+    },
+    "item_name": {
+      "correct": 1,
+      "total": 1,
+      "value": 1.0,
+      "ci95": [
+        0.2065493143772375,
+        1.0
+      ]
+    },
+    "effective_date": {
+      "correct": 1,
+      "total": 1,
+      "value": 1.0,
+      "ci95": [
+        0.2065493143772375,
+        1.0
+      ]
+    }
+  },
+  "field_micro_prf": {
+    "true_positive": 4,
+    "false_positive": 0,
+    "false_negative": 0,
+    "precision": 1.0,
+    "recall": 1.0,
+    "f1": 1.0,
+    "precision_ci95": [
+      0.5101091635454028,
+      1.0
+    ],
+    "recall_ci95": [
+      0.5101091635454028,
+      1.0
+    ]
+  },
+  "field_prf": {
+    "category": {
+      "true_positive": 1,
+      "false_positive": 0,
+      "false_negative": 0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0,
+      "precision_ci95": [
+        0.2065493143772375,
+        1.0
+      ],
+      "recall_ci95": [
+        0.2065493143772375,
+        1.0
+      ]
+    },
+    "level": {
+      "true_positive": 1,
+      "false_positive": 0,
+      "false_negative": 0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0,
+      "precision_ci95": [
+        0.2065493143772375,
+        1.0
+      ],
+      "recall_ci95": [
+        0.2065493143772375,
+        1.0
+      ]
+    },
+    "score": {
+      "true_positive": 1,
+      "false_positive": 0,
+      "false_negative": 0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0,
+      "precision_ci95": [
+        0.2065493143772375,
+        1.0
+      ],
+      "recall_ci95": [
+        0.2065493143772375,
+        1.0
+      ]
+    },
+    "synonyms": {
+      "true_positive": 0,
+      "false_positive": 0,
+      "false_negative": 0,
+      "precision": null,
+      "recall": null,
+      "f1": null,
+      "precision_ci95": null,
+      "recall_ci95": null
+    },
+    "cap": {
+      "true_positive": 0,
+      "false_positive": 0,
+      "false_negative": 0,
+      "precision": null,
+      "recall": null,
+      "f1": null,
+      "precision_ci95": null,
+      "recall_ci95": null
+    },
+    "team_factor": {
+      "true_positive": 0,
+      "false_positive": 0,
+      "false_negative": 0,
+      "precision": null,
+      "recall": null,
+      "f1": null,
+      "precision_ci95": null,
+      "recall_ci95": null
+    },
+    "clause": {
+      "true_positive": 0,
+      "false_positive": 0,
+      "false_negative": 0,
+      "precision": null,
+      "recall": null,
+      "f1": null,
+      "precision_ci95": null,
+      "recall_ci95": null
+    },
+    "evidence_quote": {
+      "true_positive": 1,
+      "false_positive": 0,
+      "false_negative": 0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0,
+      "precision_ci95": [
+        0.2065493143772375,
+        1.0
+      ],
+      "recall_ci95": [
+        0.2065493143772375,
+        1.0
+      ]
+    },
+    "rank": {
+      "true_positive": 0,
+      "false_positive": 0,
+      "false_negative": 0,
+      "precision": null,
+      "recall": null,
+      "f1": null,
+      "precision_ci95": null,
+      "recall_ci95": null
+    },
+    "item_name": {
+      "true_positive": 0,
+      "false_positive": 0,
+      "false_negative": 0,
+      "precision": null,
+      "recall": null,
+      "f1": null,
+      "precision_ci95": null,
+      "recall_ci95": null
+    },
+    "effective_date": {
+      "true_positive": 0,
+      "false_positive": 0,
+      "false_negative": 0,
+      "precision": null,
+      "recall": null,
+      "f1": null,
+      "precision_ci95": null,
+      "recall_ci95": null
+    }
+  },
+  "complete_case_accuracy": {
+    "correct": 1,
+    "total": 1,
+    "value": 1.0,
+    "ci95": [
+      0.2065493143772375,
+      1.0
+    ]
+  },
+  "formal_gate_eligible": false,
+  "passed": false,
+  "smoke_test_only": true,
+  "results": [
+    {
+      "case_id": "synthetic-rule-001",
+      "source_id": "synthetic-clear-rule-001",
+      "source_sha256": "5bad3d1661043e3ea5e84629715dcdbc5357851ad7a7b00eece4c481effd391b",
+      "expected_rules": 1,
+      "predicted_rules": 1,
+      "scored_rule_units": 1,
+      "exact_rules_correct": 1,
+      "field_correct": {
+        "category": 1,
+        "level": 1,
+        "score": 1,
+        "synonyms": 1,
+        "cap": 1,
+        "team_factor": 1,
+        "clause": 1,
+        "evidence_quote": 1,
+        "rank": 1,
+        "item_name": 1,
+        "effective_date": 1
+      },
+      "field_total": {
+        "category": 1,
+        "level": 1,
+        "score": 1,
+        "synonyms": 1,
+        "cap": 1,
+        "team_factor": 1,
+        "clause": 1,
+        "evidence_quote": 1,
+        "rank": 1,
+        "item_name": 1,
+        "effective_date": 1
+      },
+      "field_true_positive": {
+        "category": 1,
+        "level": 1,
+        "score": 1,
+        "synonyms": 0,
+        "cap": 0,
+        "team_factor": 0,
+        "clause": 0,
+        "evidence_quote": 1,
+        "rank": 0,
+        "item_name": 0,
+        "effective_date": 0
+      },
+      "field_false_positive": {
+        "category": 0,
+        "level": 0,
+        "score": 0,
+        "synonyms": 0,
+        "cap": 0,
+        "team_factor": 0,
+        "clause": 0,
+        "evidence_quote": 0,
+        "rank": 0,
+        "item_name": 0,
+        "effective_date": 0
+      },
+      "field_false_negative": {
+        "category": 0,
+        "level": 0,
+        "score": 0,
+        "synonyms": 0,
+        "cap": 0,
+        "team_factor": 0,
+        "clause": 0,
+        "evidence_quote": 0,
+        "rank": 0,
+        "item_name": 0,
+        "effective_date": 0
+      },
+      "complete_correct": true,
+      "gateway_rejected": 0,
+      "secondary_used": false,
+      "extraction_error": null
+    }
+  ],
+  "limitations": [
+    "人工金标规则只有 1 条；正式验收要求 n≥50。",
+    "包含合成或未声明为真实的原文，只能作为烟雾测试。",
+    "缺少公开来源或数据授权引用。",
+    "未声明为独立真实评测样本。"
+  ]
+}

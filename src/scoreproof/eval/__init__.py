@@ -51,6 +51,17 @@ from .retrieval import (
     evaluate_retriever,
     load_retrieval_cases,
 )
+from .rule_extraction import (
+    RULE_EXTRACTION_FIELDS,
+    AccuracyMetric,
+    FieldPRFMetric,
+    RuleExtractionCase,
+    RuleExtractionCaseResult,
+    RuleExtractionDataset,
+    RuleExtractionReport,
+    evaluate_rule_extraction,
+    load_rule_extraction_dataset,
+)
 from .user_trial import (
     TrialSession,
     UserTrialDataset,
@@ -63,6 +74,7 @@ from .user_trial import (
 
 __all__ = [
     "BacktestMode",
+    "AccuracyMetric",
     "BacktestReport",
     "CitationRefusalReport",
     "CertificateEvaluationReport",
@@ -81,10 +93,16 @@ __all__ = [
     "PDFRegressionReport",
     "PDFScenarioMetric",
     "FieldMetric",
+    "FieldPRFMetric",
     "RefusalCase",
     "RetrievalAblationReport",
     "RetrievalCase",
     "RetrievalVariantReport",
+    "RULE_EXTRACTION_FIELDS",
+    "RuleExtractionCase",
+    "RuleExtractionCaseResult",
+    "RuleExtractionDataset",
+    "RuleExtractionReport",
     "StudentResult",
     "TrialSession",
     "UserTrialDataset",
@@ -98,6 +116,7 @@ __all__ = [
     "evaluate_gateway_negatives",
     "evaluate_pdf_regression",
     "evaluate_retriever",
+    "evaluate_rule_extraction",
     "evaluate_user_trials",
     "item_reference_template",
     "load_ground_truth",
@@ -106,6 +125,7 @@ __all__ = [
     "load_refusal_cases",
     "load_pdf_regression_dataset",
     "load_retrieval_cases",
+    "load_rule_extraction_dataset",
     "load_user_trial_dataset",
     "new_participant_token",
     "run_backtest",

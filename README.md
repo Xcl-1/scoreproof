@@ -102,12 +102,12 @@ scoreproof/
 │   ├── calc/                 # 计算引擎（纯函数 + 可解释账本）
 │   ├── retrieval/            # structured 主 + BM25/BGE + RRF/Rerank + 引用核查
 │   ├── agent/                # 五个 @tool + 显式状态机 + 数字/引用护栏 + 降级路由
-│   ├── eval/                 # backtest + 消融/引用评测 + 一键演示/发布门禁
+│   ├── eval/                 # 回测、规则抽取、消融/引用评测与发布门禁
 │   ├── evidence/             # 奖状字段 Schema、代码校验、置信度与 VLM 决策
 │   ├── api/                  # FastAPI + SSE
 │   └── cli.py                # typer 命令行
 ├── reports/                  # 可复跑评测报告（样本量、版本、置信区间）
-├── tests/                    # 426 项自动化测试（合成/公开数据，无隐私）
+├── tests/                    # 436 项自动化测试（合成/公开数据，无隐私）
 └── web/                      # 前端占位（V3.0：P2 延后）
 ```
 
@@ -172,6 +172,7 @@ scoreproof/
 | `scoreproof eval-user-trial trial.json --out reports/user-trial-v1.json` | 汇总去重用户数、成功/核验/人工复核率及 Wilson 区间、P50/P90 耗时；门禁不满足时退出码为 2 |
 | `scoreproof demo` | 在唯一隔离目录中真实复跑合成 Excel → SQLite → 核算 → 逐项回测 → 解释查询，产物逐文件记录 SHA-256；永远标记为烟雾测试 |
 | `scoreproof extract-rules-llm 规则文本.txt -y 2025-2026 --double-check --allowed-level 第一专利人` | LLM 抽取经过五道验证及独立冲突门禁；自定义等级参数可重复；默认只审计不发布 |
+| `scoreproof eval-rule-extraction dataset.json --out reports/rule-extraction-formal-v1.json` | 用真实 DeepSeek 评测通过网关后的完整规则正确率、逐字段 P/R/F1 与 Wilson 区间；正式门禁要求 n≥50 独立真实授权金标且完整规则正确率≥96% |
 | `scoreproof eval-extraction-gateway tests/fixtures/gateway_negative_cases.json -y 2025-2026` | 复跑 100 条分层负例，报告各道网关及冲突门禁的 Wilson 95% 区间 |
 | `scoreproof parse-claims 综测表.xlsx` | 解析申报条目（含合并单元格 fill-down） |
 | `scoreproof import-rules 规则表.xlsx -y 2025-2026` | 规则入库（建议人工校对一遍） |
@@ -183,6 +184,18 @@ scoreproof/
 | `scoreproof export-backtest-template 明细.xlsx --out 逐项参照.xlsx` | 从申报明细生成稳定的逐项标注模板 |
 | `scoreproof backtest 明细.xlsx --truth 汇总.xlsx --item-reference 逐项参照.xlsx --required-students 52` | 逐人/逐项回测、完整差异与 52 人数据门禁 |
 | `scoreproof serve` | 启动 FastAPI（`/docs`） |
+
+### 规则抽取正式评测数据准备
+
+空协议模板位于 `data/sample/rule_extraction_template.json`，正式金标应放在不会提交的
+`data/eval/rule-extraction/`。每个原文块必须提供人工确认的完整 `RuleDraftInput` 字段；金标本身
+也必须通过同一五道代码网关。评测只统计通过网关的模型输出，漏抽与额外输出都会进入分母，
+并报告完整规则正确率、逐字段准确率、逐字段 P/R/F1 和 Wilson 95% 区间。正式报告固定为
+`reports/rule-extraction-formal-v1.json`，要求至少 50 条独立真实授权金标、真实外部文本模型调用，
+且完整规则正确率不低于 96%。
+
+当前 `reports/rule-extraction-smoke-v1.json` 仅使用 1 条合成清晰规则。真实 DeepSeek CLI 调用和
+五道网关已跑通，1/1 完全匹配，但该数字只验证工程链路，不能作为正式抽取指标或简历数字。
 
 ### 52 人真实回测数据准备
 
@@ -240,12 +253,12 @@ uv run scoreproof backtest data/eval/backtest-2025-2026/claims.xlsx \
 | 阶段 | 内容 | 状态 |
 |---|---|---|
 | 阶段 0～1 | 口径、Schema、数据库与工程基线 | ✅ 已完成 |
-| 阶段 2 | 异构解析与 LangChain 抽取 | 🟡 多栏重排、跨页逻辑表、bbox/原文保留、扫描/歧义复核及评测门禁已落地；1 份真实公开跨页 PDF 的 CLI 烟雾通过，但三类各 n≥10 的正式回归集仍缺 |
+| 阶段 2 | 异构解析与 LangChain 抽取 | 🟡 复杂 PDF 与规则抽取评测门禁已落地；真实公开跨页 PDF n=1、真实 DeepSeek 合成规则 n=1 的 CLI 烟雾通过，但复杂版面正式集及 n≥50 规则金标仍缺 |
 | 阶段 3 | 五道抽取验证 + 独立发布冲突门禁 | ✅ 代码链路与 100 条分层冻结负例完成 |
 | 阶段 4 | 增量索引、混合检索、LangChain 工具编排 | ✅ 4.1～4.5 已完成：索引、混合检索、五工具状态机、代码级引用门禁与成对拒答评测均通过真实 CLI/API 验收 |
 | 阶段 5 | 确定性计算与 52 人回测 | 🟡 逐人/逐项回测、双口径、完整差异与 52 人门禁已落地；5 人合成文件真实 CLI 通过，52 人脱敏历史数据待提供 |
 | 阶段 6 | OCR + LLM/VLM + 查重 | 🟡 **6.1～6.3 工具链已落地但阶段未完成**：真实 RapidOCR + DeepSeek CLI/Uvicorn 上传 API、联合查重 CLI/API 与一致性入口已跑通；VLM 未调用，n≥30 真实脱敏字段集与 n≥50 对独立真实查重集仍缺 |
-| 阶段 7 | 消融、全量评测与结项 | 🟡 **候选门禁、成本可观测、用户试用评测及一键演示已落地，阶段未完成**：合成演示五步真实 CLI 链路通过但不替代业务验收；尚无已授权真实用户记录，正式数据、VLM、52 人回测及完整货币成本仍阻塞 |
+| 阶段 7 | 消融、全量评测与结项 | 🟡 **候选门禁、规则抽取评测、成本可观测、用户试用评测及一键演示已落地，阶段未完成**：合成演示及抽取烟雾链路不替代业务验收；尚无 n≥50 规则金标、已授权真实用户记录，其他正式数据、VLM、52 人回测及完整货币成本仍阻塞 |
 
 ## 测试
 
@@ -257,13 +270,18 @@ uv run scoreproof backtest data/eval/backtest-2025-2026/claims.xlsx \
 
 奖状字段烟雾报告见 `reports/certificate-fields-smoke-v1.json`：5 张合成图片均实际经过 RapidOCR 与 DeepSeek 文本 API；规范值 micro-F1 为 0.8788，整证完全正确 1/5，VLM 决策触发 4/5、实际调用 0/5。失败主要来自两张赛事名漏掉级别前缀，以及 4 张证书没有“个人”原文、系统按“不猜测”原则将团队属性置空。**该结果仅验证代码、CLI/API 与外部文本服务主链路，不是正式业务评测，不能用于简历；原始值标签尚未提供，raw F1 为 null。**
 
+规则抽取烟雾报告见 `reports/rule-extraction-smoke-v1.json`：真实 CLI 调用已配置的 DeepSeek
+文本模型，1 条合成清晰规则经过严格 Schema 与五道网关后完整匹配，11 个字段准确率为 1.0；
+该集合只有 n=1，且不是独立真实授权金标，Wilson 95% 区间下界很低，报告固定为
+`smoke_test_only=true`、`formal_gate_eligible=false`，不得用于正式验收或简历。
+
 查重烟雾报告见 `reports/evidence-dedup-smoke-v1.json`：真实 CLI 读取合成奖状文件及其完全相同、JPEG 压缩、亮度变化、裁剪缩放变体，n=5（重复正例 4、不同奖状负例 1）的烟雾结果为 TP=4、FP=0、TN=1、FN=0；Recall/Precision 点估计虽均为 1.0，但各自 Wilson 95% CI 下界仅 0.5101。**该集合规模小、类别不充分且图片为合成，不具备 n≥50 对正式验收资格，数字不得写入简历。**
 
-阶段 7 就绪审计见 `reports/quality-gates-v1.json` 与 `reports/release-readiness-v1.json`：固定质量命令真实执行后 426 项测试、Ruff、mypy、`uv lock --offline --check` 和 `git diff --check` 均通过；由于当前变更尚未提交，候选冻结门禁仍阻塞。统一审计认可网关、A/B/C 三档消融、引用/拒答、编排护栏和一键合成演示报告；复杂 PDF 现有真实公开文档 n=1 仍只算烟雾，且 n≥30 字段集、真实 VLM、n≥50 查重对、52 人回测和真实用户试用继续阻塞。**这只是阶段 7 工具链与真实入口验证，不代表 RC 或项目结项。**
+阶段 7 就绪审计见 `reports/quality-gates-v1.json` 与 `reports/release-readiness-v1.json`：固定质量命令真实执行后 436 项测试、Ruff、mypy、`uv lock --offline --check` 和 `git diff --check` 均通过；由于当前变更尚未提交，候选冻结门禁仍阻塞。统一审计认可网关、A/B/C 三档消融、引用/拒答、编排护栏和一键合成演示报告；复杂 PDF 与规则抽取当前均只算烟雾，且 n≥30 字段集、真实 VLM、n≥50 查重对、52 人回测和真实用户试用继续阻塞。**这只是阶段 7 工具链与真实入口验证，不代表 RC 或项目结项。**
 
 一键演示报告见 `reports/demo-smoke-v1.json`：`scoreproof demo` 在全新隔离目录中启动 5 个真实 CLI 子进程，生成并读取 Excel/CSV、写入 SQLite，完成规则导入、5 人 13 项确定性核算、逐项回测及解释查询；9 个输入/输出产物均记录 SHA-256。输出目录非空时命令会拒绝覆盖，报告 Schema 不保存子进程业务输出。该数据全部由脚本合成，报告固定为 `smoke_test_only=true`、`formal_gate_eligible=false`，不能解除 52 人回测或任何真实数据门禁。
 
-成本可观测报告见 `reports/cost-summary-v1.json`：统一账本只保存模型、用途、token、材料/批次标识、缓存状态和时间，不保存提示词、回复、密钥或原始学号；只有配置独立 `SCOREPROOF_COST_ID_SALT` 时才以 HMAC 记录稳定用户摘要。一次真实 DeepSeek 规则抽取成功返回输入 692、输出 540、合计 1,232 token；首次受限网络尝试作为失败事件如实保留。当前没有配置经账单确认的人民币单价，也没有真实学生批次，因此每 100 份材料和每名学生成本仍为 `null`，成本门禁保持警告，不能据此宣称阶段 7 完成。只读 API 为 `GET /api/costs/summary`。
+成本可观测报告见 `reports/cost-summary-v1.json`：统一账本只保存模型、用途、token、材料/批次标识、缓存状态和时间，不保存提示词、回复、密钥或原始学号；只有配置独立 `SCOREPROOF_COST_ID_SALT` 时才以 HMAC 记录稳定用户摘要。当前累计 15 次外部调用，其中 1 次受限网络失败；14 次成功调用中 2 次返回 usage，合计输入 1,388、输出 416、总计 1,804 token，覆盖率仅 14.29%，因此不能把该 token 合计解释为全部调用成本。当前没有配置经账单确认的人民币单价，也没有真实学生批次，每 100 份材料和每名学生成本仍为 `null`，成本门禁保持警告。只读 API 为 `GET /api/costs/summary`。
 
 真正启用视觉模型前必须在 `.env` 二选一配置：`SCOREPROOF_VLM_PROVIDER=qwen-vl-plus` + `DASHSCOPE_API_KEY`，或 `SCOREPROOF_VLM_PROVIDER=glm-4v` + `ZHIPUAI_API_KEY`。当前 DeepSeek 是文本模型，不会被当作 VLM；未配置时低置信字段只进入人工复核。
 

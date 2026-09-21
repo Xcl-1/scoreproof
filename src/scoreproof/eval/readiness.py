@@ -20,6 +20,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from .demo import DemoReport
 from .gateway import wilson_interval
 from .pdf_regression import PDFRegressionReport
+from .rule_extraction import RuleExtractionReport
 
 GateStatus = Literal["通过", "阻塞", "缺失", "仅烟雾", "警告"]
 
@@ -110,6 +111,8 @@ class ReleaseReadinessReport(BaseModel):
 _ARTIFACTS: tuple[tuple[str, str], ...] = (
     ("quality", "quality-gates-v1.json"),
     ("complex_pdf", "complex-pdf-regression-v1.json"),
+    ("rule_extraction", "rule-extraction-formal-v1.json"),
+    ("rule_extraction_smoke", "rule-extraction-smoke-v1.json"),
     ("gateway", "gateway-negative-v2.json"),
     ("retrieval", "retrieval-ablation-v1.json"),
     ("citation", "citation-refusal-v1.json"),
@@ -307,6 +310,74 @@ def _gateway_gate(payload: dict[str, Any] | None, filename: str) -> ReadinessGat
         sample_size=sample,
         metrics={"detection_rate": rate, "has_ci95": has_ci},
         reasons=[] if passed else ["要求 n≥100、检出率≥99% 且报告 Wilson 95% 区间"],
+    )
+
+
+def _rule_extraction_gate(
+    payload: dict[str, Any] | None,
+    filename: str,
+    smoke_exists: bool,
+) -> ReadinessGate:
+    if payload is None:
+        return ReadinessGate(
+            id="rule_extraction",
+            title="规则字段完整正确率",
+            required=True,
+            status="仅烟雾" if smoke_exists else "缺失",
+            artifact=filename,
+            reasons=[
+                f"缺少正式产物 {filename}",
+                *(["检测到规则抽取烟雾报告，但不能替代 n≥50 正式评测"] if smoke_exists else []),
+            ],
+        )
+    try:
+        report = RuleExtractionReport.model_validate_json(
+            json.dumps(payload, ensure_ascii=False)
+        )
+    except ValueError as exc:
+        return ReadinessGate(
+            id="rule_extraction",
+            title="规则字段完整正确率",
+            required=True,
+            status="阻塞",
+            artifact=filename,
+            reasons=[f"规则抽取报告 Schema 无效：{exc}"],
+        )
+    exact = report.exact_rule_accuracy
+    passed = bool(
+        report.formal_gate_eligible
+        and report.passed
+        and not report.smoke_test_only
+        and report.sample_size >= 50
+        and report.real_sources
+        and report.authorization_verified
+        and report.independent_real_samples
+        and report.real_external_service
+        and exact.value is not None
+        and exact.value >= 0.96
+        and exact.ci95 is not None
+    )
+    return ReadinessGate(
+        id="rule_extraction",
+        title="规则字段完整正确率",
+        required=True,
+        status="通过" if passed else ("仅烟雾" if report.smoke_test_only else "阻塞"),
+        artifact=filename,
+        sample_size=report.sample_size,
+        metrics={
+            "exact_rule_accuracy": exact.value,
+            "exact_rule_ci95": exact.ci95,
+            "field_micro_accuracy": report.field_micro_accuracy.value,
+            "real_external_service": report.real_external_service,
+            "formal_gate_eligible": report.formal_gate_eligible,
+        },
+        reasons=(
+            []
+            if passed
+            else [
+                "要求 n≥50 独立真实授权金标、真实文本模型调用、完整规则正确率≥96% 及 95% 区间"
+            ]
+        ),
     )
 
 
@@ -752,6 +823,11 @@ def build_release_readiness(
     gates = [
         _quality_gate(payloads["quality"], filenames["quality"], candidate_version),
         _complex_pdf_gate(payloads["complex_pdf"], filenames["complex_pdf"]),
+        _rule_extraction_gate(
+            payloads["rule_extraction"],
+            filenames["rule_extraction"],
+            payloads["rule_extraction_smoke"] is not None,
+        ),
         _gateway_gate(payloads["gateway"], filenames["gateway"]),
         _retrieval_gate(payloads["retrieval"], filenames["retrieval"]),
         _citation_gate(payloads["citation"], filenames["citation"]),
