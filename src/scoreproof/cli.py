@@ -32,6 +32,7 @@ from .eval.citation import evaluate_citation_refusal, load_refusal_cases
 from .eval.dedup import evaluate_dedup_pairs, load_dedup_dataset
 from .eval.demo import DemoRunError, run_smoke_demo
 from .eval.gateway import GatewayNegativeCase, evaluate_gateway_negatives
+from .eval.pdf_regression import evaluate_pdf_regression, load_pdf_regression_dataset
 from .eval.readiness import build_release_readiness, run_quality_gates
 from .eval.retrieval import (
     build_ablation_report,
@@ -57,7 +58,7 @@ from .indexing import (
 )
 from .ingest.excel_loader import load_claims, load_rules
 from .ingest.image_loader import check_quality, phash, preprocess, run_ocr
-from .ingest.pdf_loader import load_pdf
+from .ingest.pdf_loader import load_pdf, load_pdf_document
 from .observability import CostLedger
 from .retrieval.hybrid import BM25Retriever, HybridRetriever
 from .retrieval.query import rewrite_retrieval_query
@@ -317,18 +318,66 @@ def parse_pdf(
     with_tables: bool = typer.Option(True, "--tables/--no-tables", help="是否抽表格"),
     out: Path | None = typer.Option(None, "--out", help="导出 JSON"),
 ) -> None:
-    """抽取 PDF 文本与表格，检查扫描件风险。"""
-    pages = load_pdf(pdf, with_tables=with_tables)
-    scanned = [p.page for p in pages if p.is_probably_scanned]
+    """抽取 PDF 文本与表格，检查多栏、跨页表和扫描件风险。"""
+    document = load_pdf_document(pdf) if with_tables else None
+    pages = document.pages if document is not None else load_pdf(pdf, with_tables=False)
+    scanned = document.scanned_pages if document is not None else [
+        page.page for page in pages if page.is_probably_scanned
+    ]
     console.print(f"共 {len(pages)} 页；文本量 {sum(p.char_count for p in pages)} 字符")
+    if document is not None:
+        spanning = [table for table in document.logical_tables if table.spans_pages]
+        console.print(
+            f"多栏页 {document.multi_column_pages or '无'}；"
+            f"逻辑表 {len(document.logical_tables)} 个（跨页 {len(spanning)} 个）"
+        )
     if scanned:
         console.print(
             f"[yellow]疑似扫描件页（需 OCR + 人工校对）：{scanned}[/yellow]"
         )
     if out:
-        payload = [
-            {"page": p.page, "text": p.text, "tables": p.tables, "meta": p.meta} for p in pages
-        ]
+        payload = {
+            "document": pdf.name,
+            "sha256": document.sha256 if document is not None else _file_sha256(pdf),
+            "document_kind": document.document_kind if document is not None else "text",
+            "multi_column_pages": document.multi_column_pages if document is not None else [],
+            "scanned_pages": scanned,
+            "review_issues": document.review_issues if document is not None else [],
+            "logical_tables": (
+                [
+                    {
+                        "id": table.id,
+                        "start_page": table.start_page,
+                        "end_page": table.end_page,
+                        "rows": table.rows,
+                        "repeated_headers_removed": table.repeated_headers_removed,
+                        "continuation_reasons": table.continuation_reasons,
+                        "fragments": [
+                            {
+                                "page": fragment.page,
+                                "table_index": fragment.table_index,
+                                "bbox": fragment.bbox,
+                            }
+                            for fragment in table.fragments
+                        ],
+                    }
+                    for table in document.logical_tables
+                ]
+                if document is not None
+                else []
+            ),
+            "pages": [
+                {
+                    "page": page.page,
+                    "text": page.text,
+                    "raw_text": page.raw_text,
+                    "blocks": page.blocks,
+                    "tables": page.tables,
+                    "meta": page.meta,
+                }
+                for page in pages
+            ],
+        }
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
         console.print(f"已写出：{out}")
@@ -336,6 +385,33 @@ def parse_pdf(
         first = next((p for p in pages if p.char_count), None)
         if first:
             console.print(first.text[:800])
+
+
+@app.command("eval-complex-pdf")
+def eval_complex_pdf_command(
+    dataset: Path = typer.Argument(..., exists=True, dir_okay=False, help="复杂 PDF 回归集 JSON"),
+    base_dir: Path | None = typer.Option(
+        None,
+        "--base-dir",
+        exists=True,
+        file_okay=False,
+        help="document 相对路径根目录；默认使用数据集所在目录",
+    ),
+    out: Path | None = typer.Option(None, "--out", help="保存严格 JSON 报告"),
+    enforce: bool = typer.Option(True, "--enforce/--no-enforce", help="未过正式门禁时退出码 2"),
+) -> None:
+    """评测多栏顺序、跨页表拼接与扫描页检测；每类正式要求至少 10 份。"""
+    source = load_pdf_regression_dataset(dataset)
+    report = evaluate_pdf_regression(source, base_dir=base_dir or dataset.parent)
+    encoded = report.model_dump_json(indent=2)
+    console.print_json(encoded)
+    if out:
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(encoded, encoding="utf-8")
+        console.print(f"已写出：{out}")
+    if enforce and not report.passed:
+        console.print("[yellow]未通过复杂 PDF 正式门禁；不得作为阶段 2/7 正式验收。[/yellow]")
+        raise typer.Exit(code=2)
 
 
 @app.command("sync-pdf-manifest")

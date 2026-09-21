@@ -39,6 +39,7 @@ def _copy_existing_reports(target: Path) -> None:
         "retrieval-ablation-v1.json",
         "citation-refusal-v1.json",
         "orchestration-guardrails-v1.json",
+        "complex-pdf-regression-v1.json",
         "certificate-fields-smoke-v1.json",
         "evidence-dedup-smoke-v1.json",
         "cost-summary-v1.json",
@@ -96,6 +97,7 @@ class TestReleaseReadiness:
         assert statuses["retrieval_ablation"] == "通过"
         assert statuses["citation_refusal"] == "通过"
         assert statuses["orchestration"] == "通过"
+        assert statuses["complex_pdf"] == "仅烟雾"
         assert statuses["certificate_fields"] == "仅烟雾"
         assert statuses["evidence_dedup"] == "仅烟雾"
         assert report.ready is False

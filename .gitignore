@@ -6,6 +6,7 @@ data/processed/
 # 合成演示数据由 scripts/make_sample_data.py 生成，不必提交；仅保留无数据的协议模板
 data/sample/*
 !data/sample/user_trial_template.json
+!data/sample/complex_pdf_regression_template.json
 data/tmp/
 data/models/
 !data/raw/.gitkeep

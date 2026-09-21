@@ -19,6 +19,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from .demo import DemoReport
 from .gateway import wilson_interval
+from .pdf_regression import PDFRegressionReport
 
 GateStatus = Literal["通过", "阻塞", "缺失", "仅烟雾", "警告"]
 
@@ -306,6 +307,64 @@ def _gateway_gate(payload: dict[str, Any] | None, filename: str) -> ReadinessGat
         sample_size=sample,
         metrics={"detection_rate": rate, "has_ci95": has_ci},
         reasons=[] if passed else ["要求 n≥100、检出率≥99% 且报告 Wilson 95% 区间"],
+    )
+
+
+def _complex_pdf_gate(payload: dict[str, Any] | None, filename: str) -> ReadinessGate:
+    if payload is None:
+        return _missing_gate("complex_pdf", "复杂 PDF 版面回归", filename)
+    try:
+        report = PDFRegressionReport.model_validate_json(json.dumps(payload, ensure_ascii=False))
+    except ValueError as exc:
+        return ReadinessGate(
+            id="complex_pdf",
+            title="复杂 PDF 版面回归",
+            required=True,
+            status="阻塞",
+            artifact=filename,
+            reasons=[f"复杂 PDF 报告 Schema 无效：{exc}"],
+        )
+    metrics = {metric.scenario: metric.model_dump(mode="json") for metric in report.scenario_metrics}
+    required_scenarios = {"multi_column", "cross_page_table", "scanned"}
+    scenario_passed = all(
+        scenario in metrics
+        and metrics[scenario]["sample_size"] >= 10
+        and metrics[scenario]["success_rate"] is not None
+        and metrics[scenario]["success_rate"] >= 0.95
+        and metrics[scenario]["ci95"] is not None
+        for scenario in required_scenarios
+    )
+    passed = bool(
+        report.passed
+        and report.formal_gate_eligible
+        and not report.smoke_test_only
+        and report.real_documents
+        and report.authorization_verified
+        and report.independent_real_documents
+        and report.sample_size >= 30
+        and report.overall_success_rate is not None
+        and report.overall_success_rate >= 0.95
+        and report.overall_ci95 is not None
+        and scenario_passed
+    )
+    return ReadinessGate(
+        id="complex_pdf",
+        title="复杂 PDF 版面回归",
+        required=True,
+        status="通过" if passed else ("仅烟雾" if report.smoke_test_only else "阻塞"),
+        artifact=filename,
+        sample_size=report.sample_size,
+        metrics={
+            "overall_success_rate": report.overall_success_rate,
+            "overall_ci95": report.overall_ci95,
+            "scenario_metrics": metrics,
+            "formal_gate_eligible": report.formal_gate_eligible,
+        },
+        reasons=(
+            []
+            if passed
+            else ["要求 30 份独立真实授权文档、三类各 n≥10、总体及各类成功率≥95% 且带区间"]
+        ),
     )
 
 
@@ -692,18 +751,7 @@ def build_release_readiness(
 
     gates = [
         _quality_gate(payloads["quality"], filenames["quality"], candidate_version),
-        _simple_real_gate(
-            payloads["complex_pdf"],
-            gate_id="complex_pdf",
-            title="复杂 PDF 版面回归",
-            filename=filenames["complex_pdf"],
-            validator=lambda value: (
-                bool(value.get("passed")) and int(_number(value, "sample_size") or 0) >= 30,
-                int(_number(value, "sample_size") or 0),
-                {"passed": bool(value.get("passed"))},
-            ),
-            failure_reason="要求多栏、跨页表格等每类至少 10 份且总体通过",
-        ),
+        _complex_pdf_gate(payloads["complex_pdf"], filenames["complex_pdf"]),
         _gateway_gate(payloads["gateway"], filenames["gateway"]),
         _retrieval_gate(payloads["retrieval"], filenames["retrieval"]),
         _citation_gate(payloads["citation"], filenames["citation"]),

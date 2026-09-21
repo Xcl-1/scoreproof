@@ -1,0 +1,64 @@
+{
+  "schema_version": "1.0",
+  "dataset_version": "public-cross-page-smoke-v1",
+  "source_sha256": "3ca0a968fba09003e3ff2a52636ca9a325bb689e87245675e943462a23e62e8a",
+  "sample_size": 1,
+  "case_count": 1,
+  "real_documents": true,
+  "authorization_verified": true,
+  "independent_real_documents": true,
+  "scenario_metrics": [
+    {
+      "scenario": "multi_column",
+      "sample_size": 0,
+      "passed": 0,
+      "success_rate": null,
+      "ci95": null
+    },
+    {
+      "scenario": "cross_page_table",
+      "sample_size": 1,
+      "passed": 1,
+      "success_rate": 1.0,
+      "ci95": [
+        0.2065493143772375,
+        1.0
+      ]
+    },
+    {
+      "scenario": "scanned",
+      "sample_size": 0,
+      "passed": 0,
+      "success_rate": null,
+      "ci95": null
+    }
+  ],
+  "overall_success_rate": 1.0,
+  "overall_ci95": [
+    0.2065493143772375,
+    1.0
+  ],
+  "formal_gate_eligible": false,
+  "passed": false,
+  "smoke_test_only": true,
+  "results": [
+    {
+      "case_id": "fzu-public-cross-page-001",
+      "document_name": "fzu_ccds_2026_recommendation_score_rules.pdf",
+      "document_sha256": "1c1fc3c899017e641f7a92430dd342634c4f50df5d67ebab6f5547e3d4b840c5",
+      "scenario": "cross_page_table",
+      "passed": true,
+      "page_count": 6,
+      "detected_multi_column_pages": [],
+      "detected_scanned_pages": [],
+      "spanning_table_count": 1,
+      "reasons": []
+    }
+  ],
+  "limitations": [
+    "只有 1 份去重文档；正式验收要求至少 30 份。",
+    "multi_column 只有 0 份去重文档；要求至少 10 份。",
+    "cross_page_table 只有 1 份去重文档；要求至少 10 份。",
+    "scanned 只有 0 份去重文档；要求至少 10 份。"
+  ]
+}

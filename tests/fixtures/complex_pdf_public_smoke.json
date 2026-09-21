@@ -1,0 +1,22 @@
+{
+  "dataset_version": "public-cross-page-smoke-v1",
+  "authorization_reference": "public-source:data/raw/public/README.md",
+  "independent_real_documents": true,
+  "cases": [
+    {
+      "case_id": "fzu-public-cross-page-001",
+      "document": "data/raw/public/fzu_ccds_2026_recommendation_score_rules.pdf",
+      "scenario": "cross_page_table",
+      "real_document": true,
+      "synthetic": false,
+      "expected_ordered_fragments": [],
+      "expected_table_fragments": [
+        "SCI、SSCI、SCIE 检索",
+        "会议 EI检索",
+        "其它CN号学术刊物上发表"
+      ],
+      "expected_min_table_rows": 30,
+      "expected_scanned_pages": []
+    }
+  ]
+}

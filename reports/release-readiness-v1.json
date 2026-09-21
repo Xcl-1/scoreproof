@@ -1,8 +1,8 @@
 {
   "schema_version": "1.0",
-  "generated_at": "2026-09-20T07:42:45.345106+00:00",
-  "candidate_version": "5b82c6a823ede32beb11a94c8a722a106121e188",
-  "manifest_hash": "d057fe9be1fbf40c612755d4f188840cf60637127f382224ac200fff6337ee10",
+  "generated_at": "2026-09-21T12:44:37.847719+00:00",
+  "candidate_version": "f7f6c082e93480aa1f2b78a86e4a186df1e87d3b",
+  "manifest_hash": "79915b3be06de01c04ab885edd1a700fd11d89c9714eff0e98b556d622ec65d3",
   "status": "阻塞",
   "ready": false,
   "report_dir": "reports",
@@ -11,16 +11,16 @@
       "name": "quality",
       "path": "quality-gates-v1.json",
       "exists": true,
-      "sha256": "3fd884463c77ab0c7484bcb1f422226168a95f5405766b1c8ca511ef1b3dcfd0",
+      "sha256": "a74cca1dfe1e700421bbae570b0cd9cbd3c619adb5c1ec6c70652a39ff0099f5",
       "valid_json": true,
       "error": null
     },
     {
       "name": "complex_pdf",
       "path": "complex-pdf-regression-v1.json",
-      "exists": false,
-      "sha256": null,
-      "valid_json": null,
+      "exists": true,
+      "sha256": "fc0f07236f7711045e5d0c94f07d0cdedee37581a719bb207630da4d022e26f8",
+      "valid_json": true,
       "error": null
     },
     {
@@ -135,9 +135,9 @@
       "required": true,
       "status": "阻塞",
       "artifact": "quality-gates-v1.json",
-      "sample_size": 417,
+      "sample_size": 426,
       "metrics": {
-        "git_head": "5b82c6a823ede32beb11a94c8a722a106121e188",
+        "git_head": "f7f6c082e93480aa1f2b78a86e4a186df1e87d3b",
         "candidate_version_matches": true,
         "all_checks_passed": true
       },
@@ -149,12 +149,45 @@
       "id": "complex_pdf",
       "title": "复杂 PDF 版面回归",
       "required": true,
-      "status": "缺失",
+      "status": "仅烟雾",
       "artifact": "complex-pdf-regression-v1.json",
-      "sample_size": null,
-      "metrics": {},
+      "sample_size": 1,
+      "metrics": {
+        "overall_success_rate": 1.0,
+        "overall_ci95": [
+          0.2065493143772375,
+          1.0
+        ],
+        "scenario_metrics": {
+          "multi_column": {
+            "scenario": "multi_column",
+            "sample_size": 0,
+            "passed": 0,
+            "success_rate": null,
+            "ci95": null
+          },
+          "cross_page_table": {
+            "scenario": "cross_page_table",
+            "sample_size": 1,
+            "passed": 1,
+            "success_rate": 1.0,
+            "ci95": [
+              0.2065493143772375,
+              1.0
+            ]
+          },
+          "scanned": {
+            "scenario": "scanned",
+            "sample_size": 0,
+            "passed": 0,
+            "success_rate": null,
+            "ci95": null
+          }
+        },
+        "formal_gate_eligible": false
+      },
       "reasons": [
-        "缺少正式产物 complex-pdf-regression-v1.json"
+        "要求 30 份独立真实授权文档、三类各 n≥10、总体及各类成功率≥95% 且带区间"
       ]
     },
     {

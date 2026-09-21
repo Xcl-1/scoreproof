@@ -28,7 +28,16 @@ from .image_loader import (
     preprocess,
     run_ocr,
 )
-from .pdf_loader import PDFPage, load_pdf, load_pdf_tables
+from .pdf_loader import (
+    PDFDocument,
+    PDFLogicalTable,
+    PDFPage,
+    PDFTableFragment,
+    load_pdf,
+    load_pdf_document,
+    load_pdf_table_fragments,
+    load_pdf_tables,
+)
 
 __all__ = [
     "DocxBlock",
@@ -37,12 +46,17 @@ __all__ = [
     "ImageQuality",
     "OcrLine",
     "OcrResult",
+    "PDFDocument",
+    "PDFLogicalTable",
     "PDFPage",
+    "PDFTableFragment",
     "fill_merged_cells",
     "check_quality",
     "load_claims",
     "load_docx",
     "load_pdf",
+    "load_pdf_document",
+    "load_pdf_table_fragments",
     "load_pdf_tables",
     "load_rules",
     "load_sheet",

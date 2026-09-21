@@ -34,6 +34,15 @@ from .gateway import (
     evaluate_gateway_negatives,
     wilson_interval,
 )
+from .pdf_regression import (
+    PDFCaseResult,
+    PDFRegressionCase,
+    PDFRegressionDataset,
+    PDFRegressionReport,
+    PDFScenarioMetric,
+    evaluate_pdf_regression,
+    load_pdf_regression_dataset,
+)
 from .retrieval import (
     RetrievalAblationReport,
     RetrievalCase,
@@ -66,6 +75,11 @@ __all__ = [
     "GatewayTargetResult",
     "ItemDiff",
     "ItemExpectation",
+    "PDFCaseResult",
+    "PDFRegressionCase",
+    "PDFRegressionDataset",
+    "PDFRegressionReport",
+    "PDFScenarioMetric",
     "FieldMetric",
     "RefusalCase",
     "RetrievalAblationReport",
@@ -82,6 +96,7 @@ __all__ = [
     "evaluate_citation_refusal",
     "evaluate_certificate_fields",
     "evaluate_gateway_negatives",
+    "evaluate_pdf_regression",
     "evaluate_retriever",
     "evaluate_user_trials",
     "item_reference_template",
@@ -89,6 +104,7 @@ __all__ = [
     "load_jsonl",
     "load_item_expectations",
     "load_refusal_cases",
+    "load_pdf_regression_dataset",
     "load_retrieval_cases",
     "load_user_trial_dataset",
     "new_participant_token",

@@ -107,7 +107,7 @@ scoreproof/
 │   ├── api/                  # FastAPI + SSE
 │   └── cli.py                # typer 命令行
 ├── reports/                  # 可复跑评测报告（样本量、版本、置信区间）
-├── tests/                    # 417 项自动化测试（合成/公开数据，无隐私）
+├── tests/                    # 426 项自动化测试（合成/公开数据，无隐私）
 └── web/                      # 前端占位（V3.0：P2 延后）
 ```
 
@@ -149,7 +149,8 @@ scoreproof/
 | 命令 | 作用 |
 |---|---|
 | `scoreproof doctor` | 环境自检（依赖/配置/规则库） |
-| `scoreproof parse-pdf 细则.pdf --tables` | 抽 PDF 文本与表格，标记疑似扫描页 |
+| `scoreproof parse-pdf 细则.pdf --tables --out parsed.json` | 保留原文/bbox，保守重排双栏，按页边缘/表头/续表标记拼接跨页表，并显式标记扫描或歧义页 |
+| `scoreproof eval-complex-pdf dataset.json --base-dir data/eval/complex-pdf --out reports/complex-pdf-regression-v1.json` | 评测多栏、跨页表和扫描页；正式门禁要求 30 份去重真实授权文档、每类 n≥10、总体及各类成功率≥95% |
 | `scoreproof sync-pdf-manifest 细则.pdf --doc-id school-rules` | 计算文档/页块 Hash，原子发布增量 manifest |
 | `scoreproof sync-pdf-hybrid 细则.pdf --doc-id school-rules --chunk-mode block --embedding-backend fastembed --embedding-model BAAI/bge-small-zh-v1.5` | 用预训练 BGE 建立 BM25/Chroma 同批 manifest；表格行保留级别上下文 |
 | `scoreproof search-index "第一专利人如何加分" --embedding-backend fastembed --embedding-model BAAI/bge-small-zh-v1.5 --rerank` | 查询改写后混合召回，并用 BGE Reranker 精排；输出各通道名次与分数 |
@@ -204,6 +205,19 @@ uv run scoreproof backtest data/eval/backtest-2025-2026/claims.xlsx \
 每人的逐项合计应等于 `totals.xlsx`。所有差异必须填写“差异归因”；只有每项都经业务
 确认并把“已裁决”设为“是”后，才可改用 `--mode adjudicated-truth` 并称为准确率。
 
+### 复杂 PDF 回归数据准备
+
+空协议模板位于 `data/sample/complex_pdf_regression_template.json`。正式数据应放在不会提交的
+`data/eval/complex-pdf/`，`document` 只能填写该目录内的安全相对路径。每个用例必须标明
+`multi_column`、`cross_page_table` 或 `scanned`，并给出可复核的文本顺序、逻辑表片段/最小行数
+或扫描页码。正式门禁按文件 SHA-256 去重，要求至少 30 份独立真实授权 PDF，三类各不少于
+10 份，总体及各类成功率均不低于 95% 且报告 Wilson 95% 区间。
+
+当前烟雾清单为 `tests/fixtures/complex_pdf_public_smoke.json`；`reports/complex-pdf-regression-v1.json`
+只使用 1 份官网公开 PDF，真实验证了第 5～6 页
+跨页论文表拼接；多栏和扫描真实集仍为 0，因此报告明确为 `smoke_test_only=true`，不能作为
+复杂 PDF 正式验收或简历数字。
+
 ### 真实用户试用数据准备
 
 先由已授权操作员导出模板，再为每名参与者生成随机 `participant_token`。记录中只允许
@@ -226,7 +240,7 @@ uv run scoreproof backtest data/eval/backtest-2025-2026/claims.xlsx \
 | 阶段 | 内容 | 状态 |
 |---|---|---|
 | 阶段 0～1 | 口径、Schema、数据库与工程基线 | ✅ 已完成 |
-| 阶段 2 | 异构解析与 LangChain 抽取 | 🟡 DeepSeek 真实 API 烟雾测试已通过；复杂版面回归集仍待验收 |
+| 阶段 2 | 异构解析与 LangChain 抽取 | 🟡 多栏重排、跨页逻辑表、bbox/原文保留、扫描/歧义复核及评测门禁已落地；1 份真实公开跨页 PDF 的 CLI 烟雾通过，但三类各 n≥10 的正式回归集仍缺 |
 | 阶段 3 | 五道抽取验证 + 独立发布冲突门禁 | ✅ 代码链路与 100 条分层冻结负例完成 |
 | 阶段 4 | 增量索引、混合检索、LangChain 工具编排 | ✅ 4.1～4.5 已完成：索引、混合检索、五工具状态机、代码级引用门禁与成对拒答评测均通过真实 CLI/API 验收 |
 | 阶段 5 | 确定性计算与 52 人回测 | 🟡 逐人/逐项回测、双口径、完整差异与 52 人门禁已落地；5 人合成文件真实 CLI 通过，52 人脱敏历史数据待提供 |
@@ -245,7 +259,7 @@ uv run scoreproof backtest data/eval/backtest-2025-2026/claims.xlsx \
 
 查重烟雾报告见 `reports/evidence-dedup-smoke-v1.json`：真实 CLI 读取合成奖状文件及其完全相同、JPEG 压缩、亮度变化、裁剪缩放变体，n=5（重复正例 4、不同奖状负例 1）的烟雾结果为 TP=4、FP=0、TN=1、FN=0；Recall/Precision 点估计虽均为 1.0，但各自 Wilson 95% CI 下界仅 0.5101。**该集合规模小、类别不充分且图片为合成，不具备 n≥50 对正式验收资格，数字不得写入简历。**
 
-阶段 7 就绪审计见 `reports/quality-gates-v1.json` 与 `reports/release-readiness-v1.json`：固定质量命令真实执行后 417 项测试、Ruff、mypy、`uv lock --offline --check` 和 `git diff --check` 均通过；由于当前变更尚未提交，候选冻结门禁仍阻塞。统一审计认可网关、A/B/C 三档消融、引用/拒答、编排护栏和一键合成演示报告，但继续阻塞复杂 PDF 正式回归、n≥30 字段集、真实 VLM、n≥50 查重对、52 人回测和真实用户试用。**这只是阶段 7 工具链与真实入口验证，不代表 RC 或项目结项。**
+阶段 7 就绪审计见 `reports/quality-gates-v1.json` 与 `reports/release-readiness-v1.json`：固定质量命令真实执行后 426 项测试、Ruff、mypy、`uv lock --offline --check` 和 `git diff --check` 均通过；由于当前变更尚未提交，候选冻结门禁仍阻塞。统一审计认可网关、A/B/C 三档消融、引用/拒答、编排护栏和一键合成演示报告；复杂 PDF 现有真实公开文档 n=1 仍只算烟雾，且 n≥30 字段集、真实 VLM、n≥50 查重对、52 人回测和真实用户试用继续阻塞。**这只是阶段 7 工具链与真实入口验证，不代表 RC 或项目结项。**
 
 一键演示报告见 `reports/demo-smoke-v1.json`：`scoreproof demo` 在全新隔离目录中启动 5 个真实 CLI 子进程，生成并读取 Excel/CSV、写入 SQLite，完成规则导入、5 人 13 项确定性核算、逐项回测及解释查询；9 个输入/输出产物均记录 SHA-256。输出目录非空时命令会拒绝覆盖，报告 Schema 不保存子进程业务输出。该数据全部由脚本合成，报告固定为 `smoke_test_only=true`、`formal_gate_eligible=false`，不能解除 52 人回测或任何真实数据门禁。
 
