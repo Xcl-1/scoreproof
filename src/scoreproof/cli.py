@@ -8,7 +8,9 @@ from __future__ import annotations
 import hashlib
 import json
 import time
+import uuid
 from collections.abc import Sequence
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -28,6 +30,7 @@ from .eval.backtest import (
 from .eval.certificate import evaluate_certificate_fields, load_jsonl
 from .eval.citation import evaluate_citation_refusal, load_refusal_cases
 from .eval.dedup import evaluate_dedup_pairs, load_dedup_dataset
+from .eval.demo import DemoRunError, run_smoke_demo
 from .eval.gateway import GatewayNegativeCase, evaluate_gateway_negatives
 from .eval.readiness import build_release_readiness, run_quality_gates
 from .eval.retrieval import (
@@ -1033,6 +1036,35 @@ def eval_user_trial_command(
     if not report.formal_gate_eligible:
         console.print("[yellow]未通过真实用户门禁；不得作为阶段 7 正式验收。[/yellow]")
         raise typer.Exit(code=2)
+
+
+@app.command("demo")
+def demo_command(
+    out_dir: Path | None = typer.Option(
+        None,
+        "--out-dir",
+        help="隔离演示目录；默认在 .tmp 下新建唯一目录，已有非空目录会被拒绝",
+    ),
+    report_out: Path | None = typer.Option(
+        None,
+        "--report-out",
+        help="演示报告路径；默认写入演示目录 demo-report.json",
+    ),
+) -> None:
+    """一键复跑合成文件 -> SQLite 规则库 -> 核算 -> 逐项回测。"""
+    stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+    destination = out_dir or PROJECT_ROOT / ".tmp" / f"demo-{stamp}-{uuid.uuid4().hex[:8]}"
+    try:
+        report = run_smoke_demo(PROJECT_ROOT, destination)
+    except (ValueError, DemoRunError) as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(code=2) from exc
+    target = report_out or Path(destination) / "demo-report.json"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(report.model_dump_json(indent=2), encoding="utf-8")
+    console.print_json(report.model_dump_json(indent=2))
+    console.print(f"[green]一键演示通过[/green]，报告：{target}")
+    console.print("[yellow]仅合成烟雾测试，不解除任何正式数据或外部服务门禁。[/yellow]")
 
 
 # ======================================================================

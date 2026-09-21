@@ -170,6 +170,70 @@ class TestReleaseReadiness:
         assert gate.status == "通过"
         assert gate.sample_size == 2
 
+    def test_one_click_demo_requires_smoke_flags_steps_and_artifact_hashes(
+        self, tmp_path: Path
+    ) -> None:
+        artifact_names = (
+            "rules_input",
+            "claims_input",
+            "totals_reference",
+            "items_reference",
+            "rules_database",
+            "rules_export",
+            "calculation",
+            "backtest",
+            "backtest_diffs",
+        )
+        artifacts = [
+            {
+                "name": name,
+                "relative_path": f"artifact-{index}.json",
+                "size_bytes": 1,
+                "sha256": "a" * 64,
+            }
+            for index, name in enumerate(artifact_names)
+        ]
+        steps = [
+            {
+                "id": step_id,
+                "status": "passed",
+                "exit_code": 0,
+                "duration_seconds": 0.1,
+            }
+            for step_id in (
+                "generate_sample_files",
+                "import_rules",
+                "calculate_scores",
+                "backtest_items",
+                "explain_claim",
+            )
+        ]
+        _write(
+            tmp_path / "demo-smoke-v1.json",
+            {
+                "schema_version": "1.0",
+                "generated_at": "2026-09-20T00:00:00+00:00",
+                "dataset_kind": "synthetic",
+                "smoke_test_only": True,
+                "formal_gate_eligible": False,
+                "all_steps_passed": True,
+                "business_checks_passed": True,
+                "sample_students": 5,
+                "sample_claims": 13,
+                "imported_rules": 13,
+                "person_agreement": 1.0,
+                "item_agreement": 1.0,
+                "steps": steps,
+                "artifacts": artifacts,
+                "limitations": ["仅合成烟雾测试"],
+            },
+        )
+        report = build_release_readiness(tmp_path, candidate_version="candidate")
+        gate = next(item for item in report.gates if item.id == "one_click_demo")
+        assert gate.status == "通过"
+        assert gate.sample_size == 5
+        assert gate.metrics["smoke_test_only"] is True
+
     def test_invalid_json_is_snapshotted_and_cannot_pass(self, tmp_path: Path) -> None:
         (tmp_path / "gateway-negative-v2.json").write_text("not-json", encoding="utf-8")
         report = build_release_readiness(tmp_path, candidate_version="candidate")

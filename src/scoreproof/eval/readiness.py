@@ -17,6 +17,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from .demo import DemoReport
 from .gateway import wilson_interval
 
 GateStatus = Literal["通过", "阻塞", "缺失", "仅烟雾", "警告"]
@@ -119,6 +120,7 @@ _ARTIFACTS: tuple[tuple[str, str], ...] = (
     ("dedup_smoke", "evidence-dedup-smoke-v1.json"),
     ("backtest", "backtest-52-v1.json"),
     ("user_trial", "user-trial-v1.json"),
+    ("demo", "demo-smoke-v1.json"),
     ("cost", "cost-summary-v1.json"),
 )
 
@@ -544,6 +546,80 @@ def _user_trial_gate(payload: dict[str, Any] | None, filename: str) -> Readiness
     )
 
 
+def _demo_gate(payload: dict[str, Any] | None, filename: str) -> ReadinessGate:
+    """一键演示本来就是合成烟雾验收，不得把它扩张为业务指标。"""
+    if payload is None:
+        return ReadinessGate(
+            id="one_click_demo",
+            title="一键合成演示",
+            required=True,
+            status="缺失",
+            artifact=filename,
+            reasons=[f"缺少一键演示产物 {filename}"],
+        )
+    try:
+        report = DemoReport.model_validate(payload)
+    except ValueError as exc:
+        return ReadinessGate(
+            id="one_click_demo",
+            title="一键合成演示",
+            required=True,
+            status="阻塞",
+            artifact=filename,
+            reasons=[f"演示报告 Schema 无效：{exc}"],
+        )
+    step_ids = {step.id for step in report.steps if step.status == "passed"}
+    required_steps = {
+        "generate_sample_files",
+        "import_rules",
+        "calculate_scores",
+        "backtest_items",
+        "explain_claim",
+    }
+    artifact_names = {artifact.name for artifact in report.artifacts}
+    required_artifacts = {
+        "rules_input",
+        "claims_input",
+        "totals_reference",
+        "items_reference",
+        "rules_database",
+        "rules_export",
+        "calculation",
+        "backtest",
+        "backtest_diffs",
+    }
+    passed = bool(
+        report.smoke_test_only
+        and not report.formal_gate_eligible
+        and report.all_steps_passed
+        and report.business_checks_passed
+        and report.sample_students == 5
+        and report.sample_claims == 13
+        and report.imported_rules == 13
+        and required_steps.issubset(step_ids)
+        and required_artifacts.issubset(artifact_names)
+    )
+    return ReadinessGate(
+        id="one_click_demo",
+        title="一键合成演示",
+        required=True,
+        status="通过" if passed else "阻塞",
+        artifact=filename,
+        sample_size=report.sample_students,
+        metrics={
+            "dataset_kind": report.dataset_kind,
+            "smoke_test_only": report.smoke_test_only,
+            "business_checks_passed": report.business_checks_passed,
+            "passed_steps": sorted(step_ids),
+        },
+        reasons=(
+            ["合成文件、真实 CLI/SQLite/核算/回测演示链路通过；不代表正式业务验收"]
+            if passed
+            else ["要求五步真实演示、固定 5 人/13 项/13 条规则及全部产物 Hash 通过"]
+        ),
+    )
+
+
 def _cost_summary(payloads: Mapping[str, dict[str, Any] | None]) -> CostSummary:
     embedding_queries = rerank_pairs = vlm_calls = 0
     retrieval = payloads.get("retrieval")
@@ -666,6 +742,7 @@ def build_release_readiness(
             failure_reason="要求 52 人数据完整门禁通过并记录真实端到端耗时",
         ),
         _user_trial_gate(payloads["user_trial"], filenames["user_trial"]),
+        _demo_gate(payloads["demo"], filenames["demo"]),
     ]
     cost = _cost_summary(payloads)
     gates.append(
@@ -708,7 +785,7 @@ def build_release_readiness(
         warning_gate_ids=warnings,
         cost_summary=cost,
         limitations=[
-            "该审计只认可固定正式报告文件名；smoke 报告永远不能使正式门禁通过。",
+            "该审计只认可固定报告文件名；字段、查重等业务指标的 smoke 报告永远不能使正式门禁通过。",
             "阶段 5、6 的缺失真实数据或外部服务结果会保持阻塞，不因进入阶段 7 而豁免。",
         ],
     )

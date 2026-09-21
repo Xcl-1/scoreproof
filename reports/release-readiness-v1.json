@@ -1,8 +1,8 @@
 {
   "schema_version": "1.0",
-  "generated_at": "2026-09-20T07:14:40.761151+00:00",
-  "candidate_version": "0af7a5eb86999eb8256691f5be69fb27fbd96a88",
-  "manifest_hash": "c913197d46983b3f7e99e47e0470818b60d0e9695ef447689c29f5a23b150818",
+  "generated_at": "2026-09-20T07:42:45.345106+00:00",
+  "candidate_version": "5b82c6a823ede32beb11a94c8a722a106121e188",
+  "manifest_hash": "d057fe9be1fbf40c612755d4f188840cf60637127f382224ac200fff6337ee10",
   "status": "阻塞",
   "ready": false,
   "report_dir": "reports",
@@ -11,7 +11,7 @@
       "name": "quality",
       "path": "quality-gates-v1.json",
       "exists": true,
-      "sha256": "5da8c100af6c1c5639991d2cd7adfa9f1b92009d8ea0f11f3fc316c119d5dedd",
+      "sha256": "3fd884463c77ab0c7484bcb1f422226168a95f5405766b1c8ca511ef1b3dcfd0",
       "valid_json": true,
       "error": null
     },
@@ -112,6 +112,14 @@
       "error": null
     },
     {
+      "name": "demo",
+      "path": "demo-smoke-v1.json",
+      "exists": true,
+      "sha256": "5fc6c2a3d377d03e5e6c60c50faea71518180779ade0230f0fc1a245bac93a56",
+      "valid_json": true,
+      "error": null
+    },
+    {
       "name": "cost",
       "path": "cost-summary-v1.json",
       "exists": true,
@@ -127,9 +135,9 @@
       "required": true,
       "status": "阻塞",
       "artifact": "quality-gates-v1.json",
-      "sample_size": 411,
+      "sample_size": 417,
       "metrics": {
-        "git_head": "0af7a5eb86999eb8256691f5be69fb27fbd96a88",
+        "git_head": "5b82c6a823ede32beb11a94c8a722a106121e188",
         "candidate_version_matches": true,
         "all_checks_passed": true
       },
@@ -278,6 +286,29 @@
       ]
     },
     {
+      "id": "one_click_demo",
+      "title": "一键合成演示",
+      "required": true,
+      "status": "通过",
+      "artifact": "demo-smoke-v1.json",
+      "sample_size": 5,
+      "metrics": {
+        "dataset_kind": "synthetic",
+        "smoke_test_only": true,
+        "business_checks_passed": true,
+        "passed_steps": [
+          "backtest_items",
+          "calculate_scores",
+          "explain_claim",
+          "generate_sample_files",
+          "import_rules"
+        ]
+      },
+      "reasons": [
+        "合成文件、真实 CLI/SQLite/核算/回测演示链路通过；不代表正式业务验收"
+      ]
+    },
+    {
       "id": "cost_observability",
       "title": "成本指标汇总",
       "required": false,
@@ -339,7 +370,7 @@
     ]
   },
   "limitations": [
-    "该审计只认可固定正式报告文件名；smoke 报告永远不能使正式门禁通过。",
+    "该审计只认可固定报告文件名；字段、查重等业务指标的 smoke 报告永远不能使正式门禁通过。",
     "阶段 5、6 的缺失真实数据或外部服务结果会保持阻塞，不因进入阶段 7 而豁免。"
   ]
 }

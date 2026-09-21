@@ -26,6 +26,7 @@ from .citation import (
     evaluate_citation_refusal,
     load_refusal_cases,
 )
+from .demo import DemoArtifact, DemoReport, DemoRunError, DemoStep, run_smoke_demo
 from .gateway import (
     GatewayEvaluationReport,
     GatewayNegativeCase,
@@ -56,6 +57,10 @@ __all__ = [
     "BacktestReport",
     "CitationRefusalReport",
     "CertificateEvaluationReport",
+    "DemoArtifact",
+    "DemoReport",
+    "DemoRunError",
+    "DemoStep",
     "GatewayEvaluationReport",
     "GatewayNegativeCase",
     "GatewayTargetResult",
@@ -88,6 +93,7 @@ __all__ = [
     "load_user_trial_dataset",
     "new_participant_token",
     "run_backtest",
+    "run_smoke_demo",
     "user_trial_template",
     "wilson_interval",
 ]

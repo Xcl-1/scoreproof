@@ -1,0 +1,107 @@
+{
+  "schema_version": "1.0",
+  "generated_at": "2026-09-20T07:35:13.213863+00:00",
+  "dataset_kind": "synthetic",
+  "smoke_test_only": true,
+  "formal_gate_eligible": false,
+  "all_steps_passed": true,
+  "business_checks_passed": true,
+  "sample_students": 5,
+  "sample_claims": 13,
+  "imported_rules": 13,
+  "person_agreement": 1.0,
+  "item_agreement": 1.0,
+  "steps": [
+    {
+      "id": "generate_sample_files",
+      "status": "passed",
+      "exit_code": 0,
+      "duration_seconds": 1.268
+    },
+    {
+      "id": "import_rules",
+      "status": "passed",
+      "exit_code": 0,
+      "duration_seconds": 1.318
+    },
+    {
+      "id": "calculate_scores",
+      "status": "passed",
+      "exit_code": 0,
+      "duration_seconds": 1.311
+    },
+    {
+      "id": "backtest_items",
+      "status": "passed",
+      "exit_code": 0,
+      "duration_seconds": 1.365
+    },
+    {
+      "id": "explain_claim",
+      "status": "passed",
+      "exit_code": 0,
+      "duration_seconds": 1.119
+    }
+  ],
+  "artifacts": [
+    {
+      "name": "rules_input",
+      "relative_path": "sample/rules_sample.xlsx",
+      "size_bytes": 5405,
+      "sha256": "9296b7c2d7faa3da6adade543dfd1b75c5544230a79f6baff91abebd361663aa"
+    },
+    {
+      "name": "claims_input",
+      "relative_path": "sample/claims_sample.xlsx",
+      "size_bytes": 5639,
+      "sha256": "5e2e4d606cb97fb83b7d0d48ff8df240accf27eb9610f404e27ae90febac75a7"
+    },
+    {
+      "name": "totals_reference",
+      "relative_path": "sample/truth_sample.xlsx",
+      "size_bytes": 5032,
+      "sha256": "a0020bb7a1069ab98c184a53d29fde80e070ef2aef1f92cacaa7027586e6c720"
+    },
+    {
+      "name": "items_reference",
+      "relative_path": "sample/item_reference_sample.csv",
+      "size_bytes": 1791,
+      "sha256": "6333d27ee8172abc848e073f7560a1d5eab129119ff680d0e42cfe9b8f0ce63c"
+    },
+    {
+      "name": "rules_database",
+      "relative_path": "rules.sqlite",
+      "size_bytes": 98304,
+      "sha256": "3a7bd7ba82e14616b267f571ada6e98103d5727aa6d2dd5447d1bb09ec22a298"
+    },
+    {
+      "name": "rules_export",
+      "relative_path": "rules.json",
+      "size_bytes": 16975,
+      "sha256": "b77cdf91eac19724708dd2fc67dca95345e53fd0a91db0ceae4fdc87b78b687e"
+    },
+    {
+      "name": "calculation",
+      "relative_path": "calculation.json",
+      "size_bytes": 29177,
+      "sha256": "4452109023f21c2dcf484162574c3f04a6555bacab972c1a4de6be5f06de2a8c"
+    },
+    {
+      "name": "backtest",
+      "relative_path": "backtest.json",
+      "size_bytes": 2303,
+      "sha256": "2d3680aea51f747ac543e9fb81ac353b81c86474ff488913aa76a26f146f371d"
+    },
+    {
+      "name": "backtest_diffs",
+      "relative_path": "backtest-diffs.csv",
+      "size_bytes": 120,
+      "sha256": "5f98016f7b6681e8584dcd8a5d72698961841abb86a520f3db4460981f6d18f0"
+    }
+  ],
+  "limitations": [
+    "全部输入均由 scripts/make_sample_data.py 合成，不含真实学生或业务材料。",
+    "该报告只验证一键演示、真实文件、CLI、SQLite、确定性核算与回测链路。",
+    "该报告不能替代 52 人回测、真实奖状/VLM、查重或真实用户试用验收。"
+  ]
+}
