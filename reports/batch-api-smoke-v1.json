@@ -1,0 +1,69 @@
+{
+  "schema_version": "1.0",
+  "generated_at": "2026-10-08T06:52:00.8561715Z",
+  "dataset_kind": "synthetic_engineering_smoke",
+  "smoke_test_only": true,
+  "formal_gate_eligible": false,
+  "source_head": "9507c32e205f8217ab45eb85019b148d7f9283aa",
+  "source_tree_clean": false,
+  "real_entrypoints": {
+    "rule_import_cli": true,
+    "uvicorn_http": true,
+    "sqlite_cross_process_reopen": true,
+    "json_file_export": true,
+    "csv_file_export": true
+  },
+  "http_statuses": {
+    "create": 201,
+    "idempotent_repeat": 200,
+    "detail": 200,
+    "list": 200,
+    "json_export": 200,
+    "csv_export": 200
+  },
+  "batch": {
+    "batch_id": "bat_3bb47583da604ea797ebaa35cd469dd7",
+    "status": "succeeded",
+    "rule_version_id": "rv_3ab32bd7b30e62ff9c036645",
+    "rule_content_hash": "3ab32bd7b30e62ff9c036645daa4ac19462b432676c8b01c0361c4c8cfc323ca",
+    "result_hash": "1f05cd7822098d0d17a068cbf6dbe300905cdcbceaf48ef2221ec4bbed93c6e5",
+    "claim_count": 2,
+    "student_count": 2,
+    "event_count": 3,
+    "student_totals": {
+      "SMOKE-001": 15.0,
+      "SMOKE-002": 12.0
+    },
+    "idempotent_repeat_returned_same_batch": true
+  },
+  "exports": {
+    "json_bytes": 8430,
+    "json_sha256": "be6992c8d24b2298d73078e6f23271522786d44ee4f469bcd1eeed3927b64ab7",
+    "csv_bytes": 938,
+    "csv_sha256": "5c90bdad82b6e7f3327afd8607033802d3193feec387077316ff4317aa981235",
+    "csv_rows": 2,
+    "formula_neutralization_passed": true,
+    "all_rows_have_rule_version": true,
+    "all_rows_have_source": true
+  },
+  "inputs": {
+    "rules_xlsx_sha256": "4c98eb23c5931f62bc7bbad9a1cfd44b6580c91d3aa42eac3d4999d9d8823199",
+    "request_json_sha256": "12a9dae68cd9f0b038e3795b91d320c4631b3330ad04f2901329472b202dbe2a",
+    "sqlite_after_run_bytes": 188416,
+    "sqlite_after_run_sha256": "5fedbe8fd10466e31c87c58f1edb1b486e2860662df72c11822c0c3223f77550"
+  },
+  "verification": {
+    "automated_tests": 469,
+    "pytest_passed": true,
+    "ruff_passed": true,
+    "mypy_passed": true,
+    "git_diff_check_passed": true
+  },
+  "scope": "验证合成 Excel 规则经真实 CLI 入库后，真实 Uvicorn HTTP 批量核算、规则版本锁、幂等重放、SQLite 跨进程持久化及 JSON/CSV 文件导出的工程主链路。",
+  "limitations": [
+    "申报和规则均为合成业务数据，不构成真实学生或真实业务验收。",
+    "本阶段实现同步执行的持久化批任务，不包含多进程后台队列、崩溃任务自动接管或分布式调度。",
+    "本地最小 API 尚未提供公网部署所需的身份认证、授权和收敛后的 CORS 策略。",
+    "不解除 52 人历史回测、真实用户试用、正式多模态数据和外部 VLM 等发布阻塞项。"
+  ]
+}

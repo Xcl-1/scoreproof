@@ -335,6 +335,93 @@ class TestCalc:
         assert '"total": 8' in body.replace(" ", " ")
 
 
+class TestBatchCalc:
+    def test_persistent_batch_idempotency_listing_and_exports(self, client: TestClient) -> None:
+        payload = {
+            "claims": [
+                {**CLAIM_OK, "student_name": "张同学"},
+                {
+                    **CLAIM_OK,
+                    "student_id": "2023002",
+                    "student_name": "=FORMULA()",
+                    "raw_text": "省一等奖",
+                    "level": "省级一等奖",
+                },
+            ],
+            "academic_year": "2025-2026",
+        }
+        headers = {"Idempotency-Key": "api-batch-test-001"}
+        created = client.post("/api/batches", json=payload, headers=headers)
+        assert created.status_code == 201, created.text
+        body = created.json()
+        task = body["task"]
+        batch_id = task["batch_id"]
+        assert body["created"] is True
+        assert task["status"] == "succeeded"
+        assert task["claim_count"] == 2 and task["student_count"] == 2
+        assert task["result_hash"]
+        assert body["artifact"]["results"]["2023001"]["total"] == 8
+        assert body["artifact"]["results"]["2023002"]["total"] == 10
+        assert [event["event_type"] for event in body["events"]] == [
+            "created",
+            "started",
+            "succeeded",
+        ]
+
+        repeated = client.post("/api/batches", json=payload, headers=headers)
+        assert repeated.status_code == 200
+        assert repeated.json()["created"] is False
+        assert repeated.json()["task"]["batch_id"] == batch_id
+
+        conflicting = client.post(
+            "/api/batches",
+            json={**payload, "college": "不同学院"},
+            headers=headers,
+        )
+        assert conflicting.status_code == 409
+        assert conflicting.json()["detail"]["code"] == "version_conflict"
+
+        listed = client.get("/api/batches")
+        assert listed.status_code == 200
+        assert listed.json()["count"] == 1
+        assert "artifact" not in listed.json()["tasks"][0]
+
+        detail = client.get(f"/api/batches/{batch_id}")
+        assert detail.status_code == 200
+        assert detail.json()["task"]["rule_content_hash"] == task["rule_content_hash"]
+        assert client.get("/api/batches/bat_missing").status_code == 404
+
+        exported_json = client.get(f"/api/batches/{batch_id}/export?format=json")
+        assert exported_json.status_code == 200
+        assert exported_json.json()["batch_id"] == batch_id
+        assert "attachment" in exported_json.headers["content-disposition"]
+
+        exported_csv = client.get(f"/api/batches/{batch_id}/export?format=csv")
+        assert exported_csv.status_code == 200
+        decoded = exported_csv.content.decode("utf-8-sig")
+        assert "rule_version_id" in decoded
+        assert "'=FORMULA()" in decoded
+
+    def test_batch_rejects_bad_idempotency_key(self, client: TestClient) -> None:
+        response = client.post(
+            "/api/batches",
+            json={"claims": [CLAIM_OK]},
+            headers={"Idempotency-Key": "bad"},
+        )
+        assert response.status_code == 422
+        assert response.json()["detail"]["code"] == "schema_validation_error"
+        duplicate_ids = client.post(
+            "/api/batches",
+            json={
+                "claims": [
+                    {**CLAIM_OK, "id": "same-claim"},
+                    {**CLAIM_OK, "id": "same-claim"},
+                ]
+            },
+        )
+        assert duplicate_ids.status_code == 422
+
+
 class TestRetrievalEndpoints:
     def test_explain(self, client: TestClient) -> None:
         res = client.post("/api/explain", json={"claim": CLAIM_OK})

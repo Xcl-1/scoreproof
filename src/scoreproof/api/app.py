@@ -12,17 +12,28 @@ import hashlib
 import json
 import uuid
 from collections.abc import AsyncIterator
+from datetime import UTC, datetime
 from itertools import combinations
 from pathlib import Path
 from typing import Any, Literal
 
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, Header, HTTPException, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, StreamingResponse
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from .. import __version__
-from ..calc.engine import EngineConfig, compute_claims
+from ..batch import (
+    BatchArtifact,
+    BatchDetail,
+    BatchInput,
+    BatchRunConfig,
+    BatchStore,
+    BatchTask,
+    artifact_to_csv,
+    canonical_hash,
+)
+from ..calc.engine import EngineConfig, compute_all, compute_claims
 from ..config import PROJECT_ROOT, get_settings
 from ..errors import SchemaValidationError, ScoreProofError, VersionConflict
 from ..eval.readiness import build_release_readiness
@@ -67,6 +78,7 @@ ClaimStatusLiteral = Literal["待核对", "已核对", "已驳回", "低置信",
 
 
 class ClaimIn(BaseModel):
+    id: str | None = Field(default=None, min_length=1, max_length=128)
     student_id: str
     student_name: str | None = None
     academic_year: str | None = None
@@ -79,15 +91,22 @@ class ClaimIn(BaseModel):
     evidence_ids: list[str] = Field(default_factory=list)
 
     def to_claim(self) -> Claim:
-        return Claim(**self.model_dump())
+        return Claim(**self.model_dump(exclude_none=True))
 
 
 class CalcRequest(BaseModel):
-    claims: list[ClaimIn] = Field(min_length=1)
+    claims: list[ClaimIn] = Field(min_length=1, max_length=5000)
     academic_year: str | None = None
     college: str | None = None
     strict_year: bool = True
     fuzzy_fallback: bool = True
+
+    @model_validator(mode="after")
+    def _unique_explicit_claim_ids(self) -> CalcRequest:
+        claim_ids = [claim.id for claim in self.claims if claim.id is not None]
+        if len(claim_ids) != len(set(claim_ids)):
+            raise ValueError("claims 中显式提供的 id 必须唯一")
+        return self
 
     def config(self) -> EngineConfig:
         return EngineConfig(strict_year=self.strict_year, fuzzy_fallback=self.fuzzy_fallback)
@@ -151,6 +170,13 @@ class ReviewDetailResponse(BaseModel):
 
     task: ReviewTask
     audit_events: list[ReviewAuditEvent]
+
+
+class BatchListResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    count: int = Field(ge=0)
+    tasks: list[BatchTask]
 
 
 # ======================================================================
@@ -417,6 +443,133 @@ def create_app() -> FastAPI:
             events(),
             media_type="text/event-stream",
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+
+    # ---------------- 持久化批量核算 ----------------
+
+    @app.post("/api/batches", response_model=BatchDetail, tags=["batches"])
+    def create_batch(
+        req: CalcRequest,
+        response: Response,
+        idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+    ) -> BatchDetail:
+        """按活动规则快照批量核算，并持久化输入、账本、版本和审计事件。"""
+        st = get_state()
+        ruleset, rule_version_id, rule_content_hash = _batch_rule_snapshot(st)
+        claims = _stable_batch_claims(req.claims)
+        batch_input = BatchInput(
+            claims=claims,
+            academic_year=req.academic_year,
+            college=req.college,
+            config=BatchRunConfig(
+                strict_year=req.strict_year,
+                fuzzy_fallback=req.fuzzy_fallback,
+            ),
+        )
+        with BatchStore(st.settings.db_path) as store:
+            try:
+                task, created = store.create(
+                    batch_input,
+                    rule_version_id=rule_version_id,
+                    rule_content_hash=rule_content_hash,
+                    rule_count=len(ruleset),
+                    idempotency_key=idempotency_key,
+                )
+            except VersionConflict as exc:
+                raise HTTPException(status_code=409, detail=exc.to_dict()) from exc
+            except SchemaValidationError as exc:
+                raise HTTPException(status_code=422, detail=exc.to_dict()) from exc
+
+            if not created:
+                detail = store.detail(task.batch_id, created=False)
+                assert detail is not None
+                return detail
+
+            response.status_code = 201
+            store.start(task.batch_id)
+            evaluated_claims = [claim.model_copy(deep=True) for claim in claims]
+            try:
+                results = compute_all(
+                    evaluated_claims,
+                    ruleset,
+                    academic_year=req.academic_year,
+                    college=req.college,
+                    config=batch_input.config.to_engine_config(),
+                )
+                artifact = BatchArtifact(
+                    batch_id=task.batch_id,
+                    rule_version_id=rule_version_id,
+                    rule_content_hash=rule_content_hash,
+                    calculated_at=datetime.now(UTC),
+                    input=batch_input,
+                    evaluated_claims=evaluated_claims,
+                    results=results,
+                )
+                store.complete(task.batch_id, artifact)
+            except ScoreProofError as exc:
+                store.fail(
+                    task.batch_id,
+                    error_code=exc.code,
+                    error_message=exc.message,
+                )
+                raise HTTPException(status_code=422, detail=exc.to_dict()) from exc
+            except Exception as exc:
+                store.fail(
+                    task.batch_id,
+                    error_code="batch_execution_error",
+                    error_message=str(exc),
+                )
+                raise
+            detail = store.detail(task.batch_id, created=True)
+            assert detail is not None
+            return detail
+
+    @app.get("/api/batches", response_model=BatchListResponse, tags=["batches"])
+    def list_batches(
+        limit: int = 50,
+        offset: int = 0,
+    ) -> BatchListResponse:
+        if not 1 <= limit <= 100 or offset < 0:
+            raise HTTPException(status_code=422, detail="limit 需为 1～100，offset 不能为负数")
+        with BatchStore(get_state().settings.db_path) as store:
+            tasks = store.list_tasks(limit=limit, offset=offset)
+        return BatchListResponse(count=len(tasks), tasks=tasks)
+
+    @app.get("/api/batches/{batch_id}", response_model=BatchDetail, tags=["batches"])
+    def show_batch(batch_id: str) -> BatchDetail:
+        with BatchStore(get_state().settings.db_path) as store:
+            detail = store.detail(batch_id)
+        if detail is None:
+            raise HTTPException(status_code=404, detail="batch_id 不存在")
+        return detail
+
+    @app.get("/api/batches/{batch_id}/export", tags=["batches"])
+    def export_batch(
+        batch_id: str,
+        format: Literal["json", "csv"] = "json",
+    ) -> Response:
+        with BatchStore(get_state().settings.db_path) as store:
+            task = store.get_task(batch_id)
+            artifact = store.get_artifact(batch_id)
+        if task is None:
+            raise HTTPException(status_code=404, detail="batch_id 不存在")
+        if artifact is None:
+            raise HTTPException(
+                status_code=409,
+                detail={"message": "批任务尚无可导出结果", "status": task.status.value},
+            )
+        filename = f"scoreproof-{batch_id}.{format}"
+        headers = {"Content-Disposition": f'attachment; filename="{filename}"'}
+        if format == "csv":
+            return Response(
+                content=artifact_to_csv(artifact),
+                media_type="text/csv; charset=utf-8",
+                headers=headers,
+            )
+        return Response(
+            content=artifact.model_dump_json(indent=2),
+            media_type="application/json; charset=utf-8",
+            headers=headers,
         )
 
     # ---------------- 检索 / 解释 ----------------
@@ -778,6 +931,38 @@ def _sse(event: str, data: dict[str, Any]) -> str:
     return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
+def _stable_batch_claims(items: list[ClaimIn]) -> list[Claim]:
+    """给未显式携带 ID 的批量条目分配可复算 ID，保证幂等输入 Hash 稳定。"""
+    claims: list[Claim] = []
+    for index, item in enumerate(items):
+        payload = item.model_dump(mode="json", exclude_none=True)
+        if "id" not in payload:
+            digest = canonical_hash({"position": index, "claim": payload})
+            payload["id"] = f"c_{digest[:20]}"
+        claims.append(Claim.model_validate(payload))
+    return claims
+
+
+def _batch_rule_snapshot(st: AppState) -> tuple[Ruleset, str, str]:
+    """每个批次重新读取活动快照，避免长驻 API 使用过期规则。"""
+    with RuleStore(st.settings.db_path) as store:
+        ruleset = store.load_ruleset()
+        active = store.active_rule_version()
+    if ruleset.rules and active is not None:
+        st.ruleset = ruleset
+        return ruleset, active.version_id, active.content_hash
+
+    # 测试注入或纯 JSON 首次运行没有 SQLite 版本；仍生成明确的内容寻址标识。
+    ruleset = st.ensure_rules()
+    canonical_rules: list[dict[str, Any]] = []
+    for rule in ruleset.rules:
+        payload = rule.model_dump(mode="json")
+        payload.pop("created_at", None)
+        canonical_rules.append(payload)
+    digest = canonical_hash(canonical_rules)
+    return ruleset, f"memory_{digest[:24]}", digest
+
+
 def _tmp_path(filename: str) -> Path:
     settings = get_settings()
     settings.ensure_dirs()
@@ -807,6 +992,7 @@ _INDEX_HTML = """<!doctype html>
  <li><a href="/docs">/docs</a> — OpenAPI 交互文档</li>
  <li><a href="/health">/health</a> — 健康检查与规则数</li>
  <li><code>POST /api/calc</code> — 提交申报条目 -> 返回可回溯账目</li>
+ <li><code>POST/GET /api/batches</code> — 持久化批量核算、规则版本锁与 JSON/CSV 导出</li>
  <li><code>POST /api/explain</code> — 单条申报的通道命中与原文引用</li>
  <li><code>POST /api/citation-check</code> — 核查真实索引引用并给出人工确认/拒答分支</li>
  <li><code>POST /api/refusal-check</code> — 未找到规则时是否正确拒答</li>
