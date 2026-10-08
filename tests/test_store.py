@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
+import sqlite3
 from pathlib import Path
 
 import pytest
+from typer.testing import CliRunner
 
+from scoreproof.cli import app
+from scoreproof.errors import VersionConflict
 from scoreproof.rules.extractor import HeuristicExtractor, RuleDraft, drafts_to_rules
 from scoreproof.rules.store import RuleStore, export_json, import_json
-from scoreproof.schema import Ruleset
+from scoreproof.schema import Ruleset, stable_rule_id
 
 from .conftest import make_rule
 
@@ -58,6 +62,26 @@ class TestRuleStore:
         assert store.list_rules()[0].score == 12
         assert store.count() == 1
 
+    def test_stable_import_replaces_matching_legacy_random_id(self, store: RuleStore) -> None:
+        legacy = make_rule("省级一等奖", 10, rule_id="legacy-random-id")
+        store.upsert_rules([legacy])
+        stable_id = stable_rule_id(
+            academic_year=legacy.academic_year,
+            college=legacy.college,
+            category=legacy.category,
+            level=legacy.level,
+            rank=legacy.rank,
+            item_name=legacy.item_name,
+            source=legacy.source,
+        )
+        revised = legacy.model_copy(update={"id": stable_id, "score": 12})
+
+        store.upsert_rules([revised])
+
+        assert store.count() == 1
+        assert store.list_rules()[0].id == stable_id
+        assert store.list_rules()[0].score == 12
+
     def test_filter_by_year_and_college(self, store: RuleStore) -> None:
         store.upsert_rules([
             make_rule("省级一等奖", 10, academic_year="2024-2025", rule_id="old"),
@@ -98,6 +122,177 @@ class TestRuleStore:
         with RuleStore(db) as s2:
             assert s2.count() == 1
 
+    def test_publish_creates_content_addressed_version_and_ruleset_declares_it(
+        self, store: RuleStore
+    ) -> None:
+        rule = make_rule("省级一等奖", 10, rule_id="r1")
+        store.upsert_rules(
+            [rule], actor="tester", source_kind="unit", source_ref="fixture:rules"
+        )
+
+        active = store.active_rule_version()
+        assert active is not None
+        assert active.version_id.startswith("rv_") and active.active
+        assert active.rule_count == 1
+        assert store.load_ruleset().version == active.version_id
+        assert store.load_ruleset().meta["rule_content_hash"] == active.content_hash
+        event = store.list_rule_version_events()[0]
+        assert event.action == "publish" and event.actor == "tester"
+
+    def test_identical_active_snapshot_is_idempotent(self, store: RuleStore) -> None:
+        rule = make_rule("省级一等奖", 10, rule_id="r1")
+        store.upsert_rules([rule])
+        active = store.active_rule_version()
+        assert active is not None
+
+        result = store.publish_rule_snapshot(
+            [rule], actor="tester", source_kind="unit"
+        )
+
+        assert result.action == "unchanged"
+        assert result.version_id == active.version_id
+        assert len(store.list_rule_versions()) == 1
+        assert len(store.list_rule_version_events()) == 1
+
+    def test_rollback_restores_complete_snapshot_and_appends_audit(
+        self, store: RuleStore
+    ) -> None:
+        store.upsert_rules([make_rule("省级一等奖", 10, rule_id="r1")], actor="alice")
+        first = store.active_rule_version()
+        assert first is not None
+        store.upsert_rules([make_rule("省级一等奖", 12, rule_id="r1")], actor="bob")
+        second = store.active_rule_version()
+        assert second is not None and second.version_id != first.version_id
+
+        result = store.rollback_rule_version(
+            first.version_id,
+            actor="reviewer",
+            note="复核发现分值录入错误",
+            expected_active_version=second.version_id,
+        )
+
+        assert result.action == "rolled_back"
+        assert store.list_rules()[0].score == 10
+        assert store.active_rule_version() == first.model_copy(update={"active": True})
+        events = store.list_rule_version_events()
+        assert [event.action for event in events] == ["publish", "publish", "rollback"]
+        assert events[-1].previous_version_id == second.version_id
+        assert events[-1].actor == "reviewer"
+
+    def test_stale_expected_version_blocks_publish_and_rollback(self, store: RuleStore) -> None:
+        first_rule = make_rule("省级一等奖", 10, rule_id="r1")
+        store.upsert_rules([first_rule])
+        first = store.active_rule_version()
+        assert first is not None
+        second_rule = make_rule("省级一等奖", 12, rule_id="r1")
+        store.upsert_rules([second_rule])
+        second = store.active_rule_version()
+        assert second is not None
+
+        with pytest.raises(VersionConflict):
+            store.publish_rule_snapshot(
+                [first_rule],
+                actor="stale-writer",
+                source_kind="unit",
+                expected_active_version=first.version_id,
+            )
+        with pytest.raises(VersionConflict):
+            store.rollback_rule_version(
+                first.version_id,
+                actor="stale-writer",
+                expected_active_version=first.version_id,
+            )
+        assert store.active_rule_version() == second
+        assert store.list_rules()[0].score == 12
+
+    def test_snapshots_and_audit_events_are_database_immutable(self, store: RuleStore) -> None:
+        store.upsert_rules([make_rule("省级一等奖", 10, rule_id="r1")])
+        active = store.active_rule_version()
+        assert active is not None
+
+        with pytest.raises(
+            sqlite3.IntegrityError, match="rule versions are immutable"
+        ), store._conn:
+            store._conn.execute(
+                "UPDATE rule_versions SET note='tampered' WHERE id=?",
+                (active.version_id,),
+            )
+        with pytest.raises(
+            sqlite3.IntegrityError, match="rule version events are immutable"
+        ), store._conn:
+            store._conn.execute("DELETE FROM rule_version_events")
+
+    def test_activation_failure_rolls_back_rules_snapshot_pointer_and_audit(
+        self, tmp_path: Path
+    ) -> None:
+        class FailingRuleStore(RuleStore):
+            fail_activation = False
+
+            def _before_rule_version_activation(self, version_id: str) -> None:
+                if self.fail_activation:
+                    raise RuntimeError(f"fault:{version_id}")
+
+        with FailingRuleStore(tmp_path / "fault.sqlite") as failing:
+            failing.upsert_rules([make_rule("省级一等奖", 10, rule_id="r1")])
+            before = failing.active_rule_version()
+            assert before is not None
+            failing.fail_activation = True
+            with pytest.raises(RuntimeError, match="fault:rv_"):
+                failing.upsert_rules([make_rule("省级一等奖", 12, rule_id="r1")])
+            assert failing.active_rule_version() == before
+            assert failing.list_rules()[0].score == 10
+            assert len(failing.list_rule_versions()) == 1
+            assert len(failing.list_rule_version_events()) == 1
+
+    def test_cli_lists_audits_and_rolls_back_with_optimistic_lock(self, tmp_path: Path) -> None:
+        db = tmp_path / "cli.sqlite"
+        with RuleStore(db) as cli_store:
+            cli_store.upsert_rules([make_rule("省级一等奖", 10, rule_id="r1")])
+            first = cli_store.active_rule_version()
+            assert first is not None
+            cli_store.upsert_rules([make_rule("省级一等奖", 12, rule_id="r1")])
+            second = cli_store.active_rule_version()
+            assert second is not None
+
+        runner = CliRunner()
+        rolled_back = runner.invoke(
+            app,
+            [
+                "rollback-rule-version",
+                first.version_id,
+                "--db",
+                str(db),
+                "--expected-version",
+                second.version_id,
+                "--actor",
+                "cli-test",
+            ],
+        )
+        assert rolled_back.exit_code == 0, rolled_back.stdout
+        assert '"action": "rolled_back"' in rolled_back.stdout
+        stale = runner.invoke(
+            app,
+            [
+                "rollback-rule-version",
+                second.version_id,
+                "--db",
+                str(db),
+                "--expected-version",
+                second.version_id,
+                "--actor",
+                "stale-cli-test",
+            ],
+        )
+        assert stale.exit_code == 2
+        assert "活动规则版本已变化" in stale.stdout
+        listed = runner.invoke(app, ["list-rule-versions", "--db", str(db), "--json"])
+        assert listed.exit_code == 0 and '"active": true' in listed.stdout
+        audited = runner.invoke(app, ["rule-version-audit", "--db", str(db), "--json"])
+        assert audited.exit_code == 0 and '"action": "rollback"' in audited.stdout
+
+        with RuleStore(db) as verified:
+            assert verified.list_rules()[0].score == 10
+
 
 class TestExtractor:
     def test_heuristic_extract(self) -> None:
@@ -121,6 +316,15 @@ class TestExtractor:
         assert rule.academic_year == "2025-2026"
         assert "省二等奖" in rule.synonyms
         assert rule.source.doc == "细则.pdf" and rule.source.page == 4
+
+    def test_rule_id_stays_stable_when_score_is_revised_at_same_source(self) -> None:
+        before = RuleDraft(
+            category="学科竞赛", level="省二等奖", score=8, evidence_quote="省二等奖 8分"
+        ).to_rule(academic_year="2025", doc="细则.pdf", page=4, char_start=20, char_end=27)
+        after = RuleDraft(
+            category="学科竞赛", level="省二等奖", score=10, evidence_quote="省二等奖 10分"
+        ).to_rule(academic_year="2025", doc="细则.pdf", page=4, char_start=20, char_end=28)
+        assert before.id == after.id
 
     def test_drafts_without_quote_are_dropped(self) -> None:
         """不可溯源 = 不可用：没有原文片段的草稿一律丢弃。"""

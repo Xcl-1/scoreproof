@@ -19,7 +19,7 @@ from ..config import get_settings
 from ..errors import DataSourceError, SchemaValidationError
 from ..normalize import normalize_academic_year, normalize_level
 from ..observability import CostLedger, classify_model_tier, pricing_from_settings
-from ..schema import ConstraintSpec, Rule, SourceRef
+from ..schema import ConstraintSpec, Rule, SourceRef, stable_rule_id
 from .gateway import ExtractionGateway, GatewayContext, GatewayReport, RuleDraftInput, chunk_hash
 
 # 给 LLM 的抽取契约直接由严格 Pydantic 模型生成，避免提示 schema 与网关漂移。
@@ -65,8 +65,27 @@ class RuleDraft:
     ) -> Rule:
         """草稿 -> 正式规则。**这是唯一的转换入口，便于统一审计。**"""
         canonical = normalize_level(self.level).canonical
+        year = normalize_academic_year(academic_year)
+        source = SourceRef(
+            doc=doc,
+            page=page,
+            table=table,
+            clause=self.clause,
+            text=self.evidence_quote[:200],
+            char_start=char_start,
+            char_end=char_end,
+        )
         return Rule(
-            academic_year=normalize_academic_year(academic_year),
+            id=stable_rule_id(
+                academic_year=year,
+                college=college,
+                category=self.category,
+                level=canonical,
+                rank=self.rank,
+                item_name=self.item_name,
+                source=source,
+            ),
+            academic_year=year,
             college=college,
             category=self.category,
             level=canonical,
@@ -79,15 +98,7 @@ class RuleDraft:
                 cap=self.cap,
                 team_factor=self.team_factor if self.team_factor is not None else 1.0,
             ),
-            source=SourceRef(
-                doc=doc,
-                page=page,
-                table=table,
-                clause=self.clause,
-                text=self.evidence_quote[:200],
-                char_start=char_start,
-                char_end=char_end,
-            ),
+            source=source,
             priority=priority,
             raw_text=self.evidence_quote[:500],
         )

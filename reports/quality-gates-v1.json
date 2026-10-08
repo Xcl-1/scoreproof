@@ -1,9 +1,9 @@
 {
   "schema_version": "1.0",
-  "generated_at": "2026-10-02T05:12:03.083989+00:00",
-  "git_head": "408bc788895ef4e643d6289f3ceed6dd802459ee",
+  "generated_at": "2026-10-08T02:18:12.156917+00:00",
+  "git_head": "e211dbf2a6c1375da8b27d82328c52fe028f5963",
   "source_tree_clean": false,
-  "pytest_total": 451,
+  "pytest_total": 463,
   "all_checks_passed": true,
   "commands": [
     {
@@ -14,9 +14,9 @@
         "pytest"
       ],
       "exit_code": 0,
-      "duration_seconds": 15.39,
+      "duration_seconds": 25.495,
       "passed": true,
-      "output_tail": "........................................................................ [ 15%]\n........................................................................ [ 31%]\n........................................................................ [ 47%]\n........................................................................ [ 63%]\n........................................................................ [ 79%]\n........................................................................ [ 95%]\n...................                                                      [100%]\n451 passed in 13.97s"
+      "output_tail": "........................................................................ [ 15%]\n........................................................................ [ 31%]\n........................................................................ [ 46%]\n........................................................................ [ 62%]\n........................................................................ [ 77%]\n........................................................................ [ 93%]\n...............................                                          [100%]\n463 passed in 23.17s"
     },
     {
       "name": "ruff",
@@ -30,7 +30,7 @@
         "scripts"
       ],
       "exit_code": 0,
-      "duration_seconds": 0.135,
+      "duration_seconds": 0.177,
       "passed": true,
       "output_tail": "All checks passed!"
     },
@@ -43,7 +43,7 @@
         "src"
       ],
       "exit_code": 0,
-      "duration_seconds": 0.264,
+      "duration_seconds": 0.561,
       "passed": true,
       "output_tail": "Success: no issues found in 52 source files"
     },
@@ -56,7 +56,7 @@
         "--check"
       ],
       "exit_code": 0,
-      "duration_seconds": 0.054,
+      "duration_seconds": 0.085,
       "passed": true,
       "output_tail": "Resolved 147 packages in 1ms"
     },
@@ -68,9 +68,9 @@
         "--check"
       ],
       "exit_code": 0,
-      "duration_seconds": 0.075,
+      "duration_seconds": 0.305,
       "passed": true,
-      "output_tail": "warning: LF will be replaced by CRLF in README.md.\nThe file will have its original line endings in your working directory\nwarning: LF will be replaced by CRLF in src/scoreproof/api/app.py.\nThe file will have its original line endings in your working directory\nwarning: LF will be replaced by CRLF in src/scoreproof/cli.py.\nThe file will have its original line endings in your working directory\nwarning: LF will be replaced by CRLF in src/scoreproof/eval/readiness.py.\nThe file will have its original line endings in your working directory\nwarning: LF will be replaced by CRLF in tests/test_api.py.\nThe file will have its original line endings in your working directory\nwarning: LF will be replaced by CRLF in tests/test_readiness.py.\nThe file will have its original line endings in your working directory\nwarning: LF will be replaced by CRLF in 综测加分核算系统-完整项目计划书-V3.0.md.\nThe file will have its original line endings in your working directory"
+      "output_tail": "warning: LF will be replaced by CRLF in README.md.\nThe file will have its original line endings in your working directory\nwarning: LF will be replaced by CRLF in src/scoreproof/api/app.py.\nThe file will have its original line endings in your working directory\nwarning: LF will be replaced by CRLF in src/scoreproof/cli.py.\nThe file will have its original line endings in your working directory\nwarning: LF will be replaced by CRLF in src/scoreproof/ingest/excel_loader.py.\nThe file will have its original line endings in your working directory\nwarning: LF will be replaced by CRLF in src/scoreproof/rules/__init__.py.\nThe file will have its original line endings in your working directory\nwarning: LF will be replaced by CRLF in src/scoreproof/rules/extractor.py.\nThe file will have its original line endings in your working directory\nwarning: LF will be replaced by CRLF in src/scoreproof/rules/gateway.py.\nThe file will have its original line endings in your working directory\nwarning: LF will be replaced by CRLF in src/scoreproof/rules/store.py.\nThe file will have its original line endings in your working directory\nwarning: LF will be replaced by CRLF in src/scoreproof/schema.py.\nThe file will have its original line endings in your working directory\nwarning: LF will be replaced by CRLF in tests/test_gateway.py.\nThe file will have its original line endings in your working directory\nwarning: LF will be replaced by CRLF in tests/test_ingest.py.\nThe file will have its original line endings in your working directory\nwarning: LF will be replaced by CRLF in tests/test_store.py.\nThe file will have its original line endings in your working directory\nwarning: LF will be replaced by CRLF in 综测加分核算系统-完整项目计划书-V3.0.md.\nThe file will have its original line endings in your working directory"
     }
   ]
 }

@@ -19,7 +19,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 from ..normalize import normalize_academic_year, normalize_level
-from ..schema import ACADEMIC_YEAR_RE, ConstraintSpec, Rule, SourceRef
+from ..schema import ACADEMIC_YEAR_RE, ConstraintSpec, Rule, SourceRef, stable_rule_id
 
 GatewayStatus = Literal["accepted", "review", "rejected"]
 GatewayStage = Literal["validation", "publication"]
@@ -148,8 +148,28 @@ class GatewayItem(BaseModel):
             raise ValueError("只有通过五道验证及发布前冲突门禁的条目才能转换为 Rule")
         draft = self.draft
         canonical = normalize_level(draft.level).canonical
+        year = normalize_academic_year(context.academic_year)
+        source = SourceRef(
+            doc=context.doc,
+            page=context.page,
+            table=context.table,
+            clause=draft.clause,
+            text=draft.evidence_quote[:200],
+            chunk_hash=self.source_chunk_hash,
+            char_start=self.char_start,
+            char_end=self.char_end,
+        )
         return Rule(
-            academic_year=normalize_academic_year(context.academic_year),
+            id=stable_rule_id(
+                academic_year=year,
+                college=context.college,
+                category=draft.category,
+                level=canonical,
+                rank=draft.rank,
+                item_name=draft.item_name,
+                source=source,
+            ),
+            academic_year=year,
             college=context.college,
             category=draft.category,
             level=canonical,
@@ -164,16 +184,7 @@ class GatewayItem(BaseModel):
                 cap=draft.cap,
                 team_factor=draft.team_factor if draft.team_factor is not None else 1.0,
             ),
-            source=SourceRef(
-                doc=context.doc,
-                page=context.page,
-                table=context.table,
-                clause=draft.clause,
-                text=draft.evidence_quote[:200],
-                chunk_hash=self.source_chunk_hash,
-                char_start=self.char_start,
-                char_end=self.char_end,
-            ),
+            source=source,
             priority=context.priority,
             raw_text=draft.evidence_quote[:500],
         )

@@ -317,6 +317,26 @@ class TestGatewayStore:
             audit = store.list_extraction_audits(report.batch_id)
             assert len(audit) == 1 and audit[0]["status"] == "accepted"
 
+    def test_extraction_publish_replaces_matching_legacy_random_id(
+        self, tmp_path: Path, gateway, context
+    ) -> None:
+        report = gateway.validate_batch(
+            [payload()], source_text="省级二等奖加8分", context=context
+        )
+        stable = report.rules()[0]
+        legacy = stable.model_copy(update={"id": "legacy-random-id"})
+        with RuleStore(tmp_path / "rules.sqlite") as store:
+            store.upsert_rules([legacy])
+
+            assert store.publish_extraction_report(report) == 1
+
+            assert store.count() == 1
+            assert store.list_rules()[0].id == stable.id
+            row = store._conn.execute(
+                "SELECT extraction_batch_id FROM rules WHERE id=?", (stable.id,)
+            ).fetchone()
+            assert row["extraction_batch_id"] == report.batch_id
+
     def test_publishing_same_batch_is_idempotent(self, tmp_path: Path, gateway, context) -> None:
         report = gateway.validate_batch(
             [payload()], source_text="省级二等奖加8分", context=context
@@ -324,6 +344,27 @@ class TestGatewayStore:
         with RuleStore(tmp_path / "rules.sqlite") as store:
             assert store.publish_extraction_report(report) == 1
             assert store.publish_extraction_report(report) == 1
+            assert store.count() == 1
+
+    def test_republishing_batch_after_rollback_requires_explicit_version_switch(
+        self, tmp_path: Path, gateway, context
+    ) -> None:
+        report = gateway.validate_batch(
+            [payload()], source_text="省级二等奖加8分", context=context
+        )
+        with RuleStore(tmp_path / "rules.sqlite") as store:
+            store.upsert_rules([make_rule("国家级一等奖", 15, rule_id="baseline")])
+            baseline = store.active_rule_version()
+            assert baseline is not None
+            assert store.publish_extraction_report(report) == 1
+            published = store.active_rule_version()
+            assert published is not None
+            store.rollback_rule_version(baseline.version_id, actor="reviewer")
+
+            with pytest.raises(VersionConflict) as exc_info:
+                store.publish_extraction_report(report)
+
+            assert exc_info.value.detail["rule_version_id"] == published.version_id
             assert store.count() == 1
 
     def test_blocked_batch_is_audited_but_not_published(
@@ -383,11 +424,27 @@ class TestGatewayStore:
                 enabled INTEGER NOT NULL DEFAULT 1, raw_text TEXT, created_at TEXT
             )"""
         )
+        connection.execute(
+            """
+            INSERT INTO rules (
+                id, academic_year, college, category, level, score, synonyms,
+                constraints, source, priority, enabled, raw_text, created_at
+            ) VALUES (
+                'legacy-r1', '2025-2026', NULL, '学科竞赛', '省级二等奖', 8,
+                '[]', '{"dedup_group":"学科竞赛"}', '{"doc":"legacy.xlsx"}',
+                0, 1, '省级二等奖 8分', '2026-01-01T00:00:00'
+            )
+            """
+        )
         connection.commit()
         connection.close()
         with RuleStore(path) as store:
             columns = {row[1] for row in store._conn.execute("PRAGMA table_info(rules)")}
+            active = store.active_rule_version()
+            events = store.list_rule_version_events()
         assert {"rank", "item_name", "extraction_batch_id"} <= columns
+        assert active is not None and active.rule_count == 1
+        assert len(events) == 1 and events[0].action == "bootstrap"
 
 
 class FakeClient:

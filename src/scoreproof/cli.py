@@ -208,6 +208,8 @@ def import_rules(
     sheet: str = typer.Option("0", "--sheet", help="工作表名或索引"),
     db: Path | None = typer.Option(None, "--db", help="SQLite 路径，默认取配置"),
     export: Path | None = typer.Option(None, "--export", help="同时导出 JSON 供人工校对"),
+    actor: str = typer.Option("cli:operator", "--actor", help="写入规则版本审计的操作者标识"),
+    note: str | None = typer.Option(None, "--note", help="本次规则发布说明"),
 ) -> None:
     """把规则表导入 SQLite（建议随后人工校对一遍）。"""
     settings = get_settings()
@@ -217,10 +219,20 @@ def import_rules(
         console.print("[yellow]没有解析出任何规则：检查表头是否包含 类别/等级/分值[/yellow]")
         raise typer.Exit(code=1)
     store = RuleStore(db or settings.db_path)
-    n = store.upsert_rules(rules)
-    console.print(f"[green]已导入 {n} 条规则[/green]（库内共 {store.count()} 条）-> {store.path}")
+    n = store.upsert_rules(
+        rules,
+        actor=actor,
+        source_kind="excel_import",
+        source_ref=f"sha256:{_file_sha256(excel)}",
+        note=note,
+    )
+    active = store.active_rule_version()
+    console.print(
+        f"[green]已导入 {n} 条规则[/green]（库内共 {store.count()} 条，"
+        f"活动版本 {active.version_id if active else 'unversioned'}）-> {store.path}"
+    )
     if export:
-        Ruleset(rules=store.list_rules()).to_json(export)
+        store.load_ruleset().to_json(export)
         console.print(f"已导出 JSON：{export}")
     store.close()
 
@@ -253,6 +265,93 @@ def show_rules(
             r.source.short(),
         )
     console.print(table)
+
+
+@app.command("list-rule-versions")
+def list_rule_versions(
+    db: Path | None = typer.Option(None, "--db", help="SQLite 路径，默认取配置"),
+    as_json: bool = typer.Option(False, "--json", help="输出机器可读 JSON"),
+) -> None:
+    """列出不可变规则快照及当前活动版本。"""
+    settings = get_settings()
+    with RuleStore(db or settings.db_path) as store:
+        versions = store.list_rule_versions()
+    if as_json:
+        console.print_json(
+            data={"versions": [item.model_dump(mode="json") for item in versions]}
+        )
+        return
+    table = Table(title=f"规则版本（{len(versions)} 个）")
+    for column in ("活动", "版本", "规则数", "来源", "父版本", "创建者", "创建时间"):
+        table.add_column(column)
+    for item in versions:
+        table.add_row(
+            "*" if item.active else "",
+            item.version_id,
+            str(item.rule_count),
+            item.source_kind,
+            item.parent_version_id or "-",
+            item.created_by,
+            item.created_at.isoformat(),
+        )
+    console.print(table)
+
+
+@app.command("rule-version-audit")
+def rule_version_audit(
+    db: Path | None = typer.Option(None, "--db", help="SQLite 路径，默认取配置"),
+    as_json: bool = typer.Option(False, "--json", help="输出机器可读 JSON"),
+) -> None:
+    """查看只追加的规则发布与回滚审计链。"""
+    settings = get_settings()
+    with RuleStore(db or settings.db_path) as store:
+        events = store.list_rule_version_events()
+    if as_json:
+        console.print_json(data={"events": [item.model_dump(mode="json") for item in events]})
+        return
+    table = Table(title=f"规则版本审计（{len(events)} 条）")
+    for column in ("ID", "动作", "版本", "前版本", "操作者", "说明", "时间"):
+        table.add_column(column)
+    for item in events:
+        table.add_row(
+            str(item.event_id),
+            item.action,
+            item.version_id,
+            item.previous_version_id or "-",
+            item.actor,
+            item.note or "-",
+            item.created_at.isoformat(),
+        )
+    console.print(table)
+
+
+@app.command("rollback-rule-version")
+def rollback_rule_version(
+    version_id: str = typer.Argument(..., help="目标规则版本 ID"),
+    db: Path | None = typer.Option(None, "--db", help="SQLite 路径，默认取配置"),
+    actor: str = typer.Option("cli:operator", "--actor", help="写入审计的操作者标识"),
+    note: str | None = typer.Option(None, "--note", help="回滚原因"),
+    expected_version: str | None = typer.Option(
+        None, "--expected-version", help="乐观锁：仅当当前活动版本等于该值时回滚"
+    ),
+) -> None:
+    """把活动规则原子切回指定历史快照。"""
+    settings = get_settings()
+    try:
+        with RuleStore(db or settings.db_path) as store:
+            if expected_version is None:
+                result = store.rollback_rule_version(version_id, actor=actor, note=note)
+            else:
+                result = store.rollback_rule_version(
+                    version_id,
+                    actor=actor,
+                    note=note,
+                    expected_active_version=expected_version,
+                )
+    except (ScoreProofError, ValueError) as exc:
+        console.print(f"[red]规则版本回滚失败：{exc}[/red]")
+        raise typer.Exit(code=2) from exc
+    console.print_json(data=result.model_dump(mode="json"))
 
 
 @app.command("ask-score")
@@ -1328,12 +1427,12 @@ def demo_command(
 def _load_ruleset(db: Path | None) -> Ruleset:
     settings = get_settings()
     store = RuleStore(db or settings.db_path)
-    rules = store.list_rules()
+    ruleset = store.load_ruleset()
     store.close()
-    if not rules:
+    if not ruleset.rules:
         console.print("[yellow]规则库是空的：先跑 import-rules[/yellow]")
         raise typer.Exit(code=1)
-    return Ruleset(rules=rules)
+    return ruleset
 
 
 @app.command("calc")

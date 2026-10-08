@@ -18,7 +18,14 @@ from .gateway import (
     RuleDraftInput,
     chunk_hash,
 )
-from .store import RuleStore, export_json, import_json
+from .store import (
+    RuleStore,
+    RuleVersionEvent,
+    RuleVersionRecord,
+    RuleVersionResult,
+    export_json,
+    import_json,
+)
 
 __all__ = [
     "RULE_BATCH_SCHEMA",
@@ -30,6 +37,9 @@ __all__ = [
     "RuleDraft",
     "RuleDraftInput",
     "RuleStore",
+    "RuleVersionEvent",
+    "RuleVersionRecord",
+    "RuleVersionResult",
     "GatewayContext",
     "GatewayIssue",
     "GatewayItem",

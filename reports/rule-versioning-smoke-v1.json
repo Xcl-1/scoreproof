@@ -1,0 +1,53 @@
+{
+  "schema_version": "1.0",
+  "generated_at": "2026-10-08T10:14:00+08:00",
+  "dataset_kind": "synthetic",
+  "smoke_test_only": true,
+  "formal_gate_eligible": false,
+  "entrypoint": ".venv/Scripts/scoreproof.exe",
+  "source_artifact": {
+    "relative_path": ".tmp/rule-version-smoke-20261008-a/sample/rules_sample.xlsx",
+    "sha256": "4b0398c13a03094e07dd39202b170734247a1762b4d02a592e063bc5c618b759",
+    "rule_count": 13
+  },
+  "checks": {
+    "real_xlsx_read": true,
+    "real_sqlite_cross_process_persistence": true,
+    "same_source_reimport_unchanged": true,
+    "same_source_reimport_rule_count": 13,
+    "same_source_reimport_version_count": 1,
+    "same_source_reimport_event_count": 1,
+    "second_version_published": true,
+    "second_version_rule_count": 26,
+    "optimistic_rollback_succeeded": true,
+    "rollback_rule_count": 13,
+    "versioned_json_export_matches_active_version": true,
+    "stale_expected_version_rejected": true,
+    "post_rollback_calc_succeeded": true,
+    "post_rollback_students": 5,
+    "post_rollback_claims": 13,
+    "legacy_database_copy_bootstrapped": true,
+    "legacy_random_ids_reconciled_without_duplication": true,
+    "legacy_upgrade_rule_count": 13,
+    "legacy_upgrade_version_count": 2,
+    "legacy_repeat_added_event": false,
+    "immutable_snapshot_and_audit_triggers_covered_by_tests": true,
+    "fault_injection_transaction_rollback_covered_by_tests": true
+  },
+  "versions": {
+    "initial": "rv_3ab32bd7b30e62ff9c036645",
+    "second": "rv_302b36fc9a45cb0bc9021d69",
+    "active_after_rollback": "rv_3ab32bd7b30e62ff9c036645",
+    "legacy_copy_baseline": "rv_8584f1261fc9bca29bd06ccc"
+  },
+  "audit_actions": [
+    "publish",
+    "publish",
+    "rollback"
+  ],
+  "limitations": [
+    "输入 Excel 与核算数据由仓库演示脚本合成，只验证真实文件、真实 CLI 与真实 SQLite 工程链路。",
+    "未修改生产规则库；旧库迁移验证在 data/rules/rules.sqlite 的隔离副本上执行。",
+    "本报告不替代真实业务规则人工发布验收，也不能解除阶段 2、5、6、7 的正式数据或外部服务阻塞项。"
+  ]
+}

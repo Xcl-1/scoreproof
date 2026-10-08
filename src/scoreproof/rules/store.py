@@ -6,20 +6,28 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import sqlite3
-from contextlib import closing
+from collections.abc import Iterator, Sequence
+from contextlib import closing, contextmanager
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Any, Literal
+
+from pydantic import BaseModel, ConfigDict, Field
 
 from ..errors import SchemaValidationError, VersionConflict
-from ..schema import Rule, Ruleset
+from ..schema import Rule, Ruleset, stable_rule_id
 
 if TYPE_CHECKING:
     from .gateway import GatewayReport
 
+_EXPECTED_VERSION_UNSET = object()
+
 SCHEMA_SQL = """
+PRAGMA foreign_keys = ON;
+
 CREATE TABLE IF NOT EXISTS rules (
     id            TEXT PRIMARY KEY,
     academic_year TEXT NOT NULL,
@@ -114,7 +122,96 @@ CREATE TABLE IF NOT EXISTS tool_calls (
     created_at     TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_tool_calls_session ON tool_calls (session_id, created_at);
+
+CREATE TABLE IF NOT EXISTS rule_versions (
+    id                TEXT PRIMARY KEY,
+    content_hash      TEXT NOT NULL UNIQUE,
+    parent_version_id TEXT,
+    rule_count        INTEGER NOT NULL,
+    snapshot_json     TEXT NOT NULL,
+    source_kind       TEXT NOT NULL,
+    source_ref        TEXT,
+    note              TEXT,
+    created_by        TEXT NOT NULL,
+    created_at        TEXT NOT NULL,
+    FOREIGN KEY(parent_version_id) REFERENCES rule_versions(id)
+);
+CREATE INDEX IF NOT EXISTS idx_rule_versions_created
+    ON rule_versions(created_at, id);
+CREATE TRIGGER IF NOT EXISTS rule_versions_no_update
+BEFORE UPDATE ON rule_versions BEGIN
+    SELECT RAISE(ABORT, 'rule versions are immutable');
+END;
+CREATE TRIGGER IF NOT EXISTS rule_versions_no_delete
+BEFORE DELETE ON rule_versions BEGIN
+    SELECT RAISE(ABORT, 'rule versions are immutable');
+END;
+
+CREATE TABLE IF NOT EXISTS rule_version_events (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    action              TEXT NOT NULL,
+    version_id          TEXT NOT NULL,
+    previous_version_id TEXT,
+    actor               TEXT NOT NULL,
+    note                TEXT,
+    created_at          TEXT NOT NULL,
+    FOREIGN KEY(version_id) REFERENCES rule_versions(id),
+    FOREIGN KEY(previous_version_id) REFERENCES rule_versions(id)
+);
+CREATE INDEX IF NOT EXISTS idx_rule_version_events_version
+    ON rule_version_events(version_id, id);
+CREATE TRIGGER IF NOT EXISTS rule_version_events_no_update
+BEFORE UPDATE ON rule_version_events BEGIN
+    SELECT RAISE(ABORT, 'rule version events are immutable');
+END;
+CREATE TRIGGER IF NOT EXISTS rule_version_events_no_delete
+BEFORE DELETE ON rule_version_events BEGIN
+    SELECT RAISE(ABORT, 'rule version events are immutable');
+END;
 """
+
+
+class RuleVersionRecord(BaseModel):
+    """不可变规则快照的元数据；是否活动由 ``meta`` 指针实时计算。"""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    version_id: str
+    content_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    parent_version_id: str | None = None
+    rule_count: int = Field(ge=0)
+    source_kind: str
+    source_ref: str | None = None
+    note: str | None = None
+    created_by: str
+    created_at: datetime
+    active: bool = False
+
+
+class RuleVersionEvent(BaseModel):
+    """只追加的发布/回滚审计事件。"""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    event_id: int = Field(ge=1)
+    action: Literal["bootstrap", "publish", "rollback"]
+    version_id: str
+    previous_version_id: str | None = None
+    actor: str
+    note: str | None = None
+    created_at: datetime
+
+
+class RuleVersionResult(BaseModel):
+    """规则快照切换结果。"""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    action: Literal["published", "unchanged", "rolled_back"]
+    version_id: str
+    previous_version_id: str | None = None
+    content_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    rule_count: int = Field(ge=0)
 
 
 class RuleStore:
@@ -165,6 +262,7 @@ class RuleStore:
                     "ALTER TABLE extraction_batches ADD COLUMN secondary_used INTEGER "
                     "NOT NULL DEFAULT 0"
                 )
+            self._bootstrap_rule_version()
 
     def close(self) -> None:
         self._conn.close()
@@ -175,61 +273,509 @@ class RuleStore:
     def __exit__(self, *exc) -> None:
         self.close()
 
+    @contextmanager
+    def _transaction(self) -> Iterator[None]:
+        """使用立即事务串行化活动版本切换，异常时恢复规则和版本指针。"""
+        self._conn.execute("BEGIN IMMEDIATE")
+        try:
+            yield
+        except Exception:
+            self._conn.rollback()
+            raise
+        else:
+            self._conn.commit()
+
+    def _bootstrap_rule_version(self) -> None:
+        """为旧数据库中已有的原地规则建立一次不可变基线，不改动规则内容。"""
+        if self._active_rule_version_id() is not None or self.count() == 0:
+            return
+        entries = self._current_snapshot_entries()
+        version_id, digest = self._ensure_rule_version(
+            entries,
+            parent_version_id=None,
+            source_kind="migration",
+            source_ref=None,
+            note="为旧规则库建立版本化基线",
+            actor="scoreproof:migration",
+        )
+        now = datetime.now().isoformat()
+        self._set_active_rule_version_id(version_id)
+        self._append_rule_version_event(
+            action="bootstrap",
+            version_id=version_id,
+            previous_version_id=None,
+            actor="scoreproof:migration",
+            note=f"legacy-content-sha256:{digest}",
+            created_at=now,
+        )
+
     # ---------- 写入 ----------
 
-    def upsert_rules(self, rules: list[Rule]) -> int:
-        rows = [
-            (
-                r.id,
-                r.academic_year,
-                r.college,
-                r.category,
-                r.level,
-                r.rank,
-                r.item_name,
-                r.score,
-                json.dumps(r.synonyms, ensure_ascii=False),
-                r.constraints.model_dump_json(),
-                r.source.model_dump_json(),
-                r.priority,
-                int(r.enabled),
-                r.raw_text,
-                None,
-                r.created_at.isoformat(),
+    def upsert_rules(
+        self,
+        rules: list[Rule],
+        *,
+        actor: str = "scoreproof:store",
+        source_kind: str = "manual",
+        source_ref: str | None = None,
+        note: str | None = None,
+    ) -> int:
+        current = {entry["rule"]["id"]: entry for entry in self._current_snapshot_entries()}
+        for rule in rules:
+            identity_id = stable_rule_id(
+                academic_year=rule.academic_year,
+                college=rule.college,
+                category=rule.category,
+                level=rule.level,
+                rank=rule.rank,
+                item_name=rule.item_name,
+                source=rule.source,
             )
-            for r in rules
-        ]
-        with self._conn:
-            self._conn.executemany(
-                """
-                INSERT INTO rules (id, academic_year, college, category, level, rank, item_name, score,
-                                   synonyms, constraints, source, priority, enabled, raw_text,
-                                   extraction_batch_id, created_at)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-                ON CONFLICT(id) DO UPDATE SET
-                    academic_year=excluded.academic_year, college=excluded.college,
-                    category=excluded.category, level=excluded.level, rank=excluded.rank,
-                    item_name=excluded.item_name, score=excluded.score,
-                    synonyms=excluded.synonyms, constraints=excluded.constraints,
-                    source=excluded.source, priority=excluded.priority,
-                    enabled=excluded.enabled, raw_text=excluded.raw_text,
-                    extraction_batch_id=COALESCE(excluded.extraction_batch_id, rules.extraction_batch_id)
-                """,
-                rows,
+            matching_ids = [
+                current_id
+                for current_id, entry in current.items()
+                if self._stable_identity_for_entry(entry) == identity_id
+            ]
+            previous_entries = [current.pop(current_id) for current_id in matching_ids]
+            previous = next(
+                (entry for entry in previous_entries if entry["extraction_batch_id"]),
+                previous_entries[0] if previous_entries else None,
             )
-        return len(rows)
+            current[rule.id] = self._snapshot_entry(
+                rule,
+                extraction_batch_id=(previous["extraction_batch_id"] if previous else None),
+            )
+        self.publish_rule_snapshot(
+            [entry["rule"] for entry in current.values()],
+            extraction_batch_ids={
+                rule_id: entry["extraction_batch_id"] for rule_id, entry in current.items()
+            },
+            actor=actor,
+            source_kind=source_kind,
+            source_ref=source_ref,
+            note=note,
+            expected_active_version=self._active_rule_version_id(),
+        )
+        return len(rules)
 
     def delete_rule(self, rule_id: str) -> bool:
-        with self._conn:
-            cur = self._conn.execute("DELETE FROM rules WHERE id = ?", (rule_id,))
-        return cur.rowcount > 0
+        entries = self._current_snapshot_entries()
+        remaining = [entry for entry in entries if entry["rule"]["id"] != rule_id]
+        if len(remaining) == len(entries):
+            return False
+        self.publish_rule_snapshot(
+            [entry["rule"] for entry in remaining],
+            extraction_batch_ids={
+                entry["rule"]["id"]: entry["extraction_batch_id"] for entry in remaining
+            },
+            actor="scoreproof:store",
+            source_kind="delete",
+            source_ref=rule_id,
+            note=f"删除规则 {rule_id}",
+            expected_active_version=self._active_rule_version_id(),
+        )
+        return True
+
+    # ---------- 不可变规则版本 ----------
+
+    def publish_rule_snapshot(
+        self,
+        rules: Sequence[Rule | dict[str, Any]],
+        *,
+        actor: str,
+        source_kind: str,
+        source_ref: str | None = None,
+        note: str | None = None,
+        expected_active_version: str | None | object = _EXPECTED_VERSION_UNSET,
+        extraction_batch_ids: dict[str, str | None] | None = None,
+    ) -> RuleVersionResult:
+        """将完整规则快照与活动指针在同一事务中发布。
+
+        ``expected_active_version`` 用于跨进程乐观锁；不传表示接受当前活动版本。
+        快照按内容寻址且不可修改，重复发布相同活动内容不会追加审计噪声。
+        """
+        actor = actor.strip()
+        source_kind = source_kind.strip()
+        if not actor or not source_kind:
+            raise ValueError("actor 与 source_kind 不能为空")
+        batch_ids = extraction_batch_ids or {}
+        validated_rules = [Rule.model_validate(rule) for rule in rules]
+        entries = [
+            self._snapshot_entry(
+                rule,
+                extraction_batch_id=batch_ids.get(rule.id),
+            )
+            for rule in validated_rules
+        ]
+        Ruleset(rules=[Rule.model_validate(entry["rule"]) for entry in entries])
+        entries.sort(key=lambda entry: str(entry["rule"]["id"]))
+
+        with self._transaction():
+            previous_id = self._active_rule_version_id()
+            if (
+                expected_active_version is not _EXPECTED_VERSION_UNSET
+                and previous_id != expected_active_version
+            ):
+                raise VersionConflict(
+                    "活动规则版本已变化，拒绝覆盖较新的发布",
+                    detail={
+                        "expected_active_version": expected_active_version,
+                        "active_version": previous_id,
+                    },
+                )
+            digest = self._rule_snapshot_hash(entries)
+            existing = self._conn.execute(
+                "SELECT id, rule_count FROM rule_versions WHERE content_hash=?", (digest,)
+            ).fetchone()
+            if existing is not None and existing["id"] == previous_id:
+                return RuleVersionResult(
+                    action="unchanged",
+                    version_id=str(existing["id"]),
+                    previous_version_id=previous_id,
+                    content_hash=digest,
+                    rule_count=int(existing["rule_count"]),
+                )
+            version_id, digest = self._ensure_rule_version(
+                entries,
+                parent_version_id=previous_id,
+                source_kind=source_kind,
+                source_ref=source_ref,
+                note=note,
+                actor=actor,
+            )
+            self._replace_live_rules(entries)
+            self._before_rule_version_activation(version_id)
+            self._set_active_rule_version_id(version_id)
+            self._append_rule_version_event(
+                action="publish",
+                version_id=version_id,
+                previous_version_id=previous_id,
+                actor=actor,
+                note=note,
+            )
+        return RuleVersionResult(
+            action="published",
+            version_id=version_id,
+            previous_version_id=previous_id,
+            content_hash=digest,
+            rule_count=len(entries),
+        )
+
+    def rollback_rule_version(
+        self,
+        version_id: str,
+        *,
+        actor: str,
+        note: str | None = None,
+        expected_active_version: str | None | object = _EXPECTED_VERSION_UNSET,
+    ) -> RuleVersionResult:
+        """把活动规则原子切回已有不可变快照，并追加回滚审计。"""
+        version_id = version_id.strip()
+        actor = actor.strip()
+        if not version_id or not actor:
+            raise ValueError("version_id 与 actor 不能为空")
+        with self._transaction():
+            previous_id = self._active_rule_version_id()
+            if (
+                expected_active_version is not _EXPECTED_VERSION_UNSET
+                and previous_id != expected_active_version
+            ):
+                raise VersionConflict(
+                    "活动规则版本已变化，拒绝执行过期回滚",
+                    detail={
+                        "expected_active_version": expected_active_version,
+                        "active_version": previous_id,
+                    },
+                )
+            row = self._conn.execute(
+                "SELECT * FROM rule_versions WHERE id=?", (version_id,)
+            ).fetchone()
+            if row is None:
+                raise SchemaValidationError(
+                    f"规则版本不存在：{version_id}", detail={"version_id": version_id}
+                )
+            if previous_id == version_id:
+                return RuleVersionResult(
+                    action="unchanged",
+                    version_id=version_id,
+                    previous_version_id=previous_id,
+                    content_hash=str(row["content_hash"]),
+                    rule_count=int(row["rule_count"]),
+                )
+            entries = self._decode_snapshot(str(row["snapshot_json"]), version_id=version_id)
+            self._replace_live_rules(entries)
+            self._before_rule_version_activation(version_id)
+            self._set_active_rule_version_id(version_id)
+            self._append_rule_version_event(
+                action="rollback",
+                version_id=version_id,
+                previous_version_id=previous_id,
+                actor=actor,
+                note=note,
+            )
+        return RuleVersionResult(
+            action="rolled_back",
+            version_id=version_id,
+            previous_version_id=previous_id,
+            content_hash=str(row["content_hash"]),
+            rule_count=int(row["rule_count"]),
+        )
+
+    def active_rule_version(self) -> RuleVersionRecord | None:
+        version_id = self._active_rule_version_id()
+        if version_id is None:
+            return None
+        row = self._conn.execute("SELECT * FROM rule_versions WHERE id=?", (version_id,)).fetchone()
+        return self._row_to_rule_version(row, active_id=version_id) if row is not None else None
+
+    def list_rule_versions(self) -> list[RuleVersionRecord]:
+        active_id = self._active_rule_version_id()
+        rows = self._conn.execute(
+            "SELECT * FROM rule_versions ORDER BY created_at DESC, rowid DESC"
+        ).fetchall()
+        return [self._row_to_rule_version(row, active_id=active_id) for row in rows]
+
+    def list_rule_version_events(self) -> list[RuleVersionEvent]:
+        rows = self._conn.execute(
+            "SELECT * FROM rule_version_events ORDER BY id"
+        ).fetchall()
+        return [
+            RuleVersionEvent(
+                event_id=int(row["id"]),
+                action=row["action"],
+                version_id=row["version_id"],
+                previous_version_id=row["previous_version_id"],
+                actor=row["actor"],
+                note=row["note"],
+                created_at=row["created_at"],
+            )
+            for row in rows
+        ]
+
+    def _active_rule_version_id(self) -> str | None:
+        row = self._conn.execute(
+            "SELECT value FROM meta WHERE key='active_rule_version_id'"
+        ).fetchone()
+        return str(row["value"]) if row is not None and row["value"] else None
+
+    def _set_active_rule_version_id(self, version_id: str) -> None:
+        self._conn.execute(
+            """
+            INSERT INTO meta (key, value) VALUES ('active_rule_version_id', ?)
+            ON CONFLICT(key) DO UPDATE SET value=excluded.value
+            """,
+            (version_id,),
+        )
+
+    @staticmethod
+    def _snapshot_entry(rule: Rule, *, extraction_batch_id: str | None) -> dict[str, Any]:
+        return {
+            "rule": rule.model_dump(mode="json"),
+            "extraction_batch_id": extraction_batch_id,
+        }
+
+    @staticmethod
+    def _stable_identity_for_entry(entry: dict[str, Any]) -> str:
+        rule = Rule.model_validate(entry["rule"])
+        return stable_rule_id(
+            academic_year=rule.academic_year,
+            college=rule.college,
+            category=rule.category,
+            level=rule.level,
+            rank=rule.rank,
+            item_name=rule.item_name,
+            source=rule.source,
+        )
+
+    def _current_snapshot_entries(self) -> list[dict[str, Any]]:
+        rows = self._conn.execute("SELECT * FROM rules ORDER BY id").fetchall()
+        return [
+            self._snapshot_entry(
+                self._row_to_rule(row), extraction_batch_id=row["extraction_batch_id"]
+            )
+            for row in rows
+        ]
+
+    @staticmethod
+    def _rule_snapshot_hash(entries: Sequence[dict[str, Any]]) -> str:
+        canonical: list[dict[str, Any]] = []
+        for entry in entries:
+            rule = dict(entry["rule"])
+            rule.pop("created_at", None)
+            canonical.append(
+                {"rule": rule, "extraction_batch_id": entry.get("extraction_batch_id")}
+            )
+        raw = json.dumps(
+            canonical, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")
+        return hashlib.sha256(raw).hexdigest()
+
+    def _ensure_rule_version(
+        self,
+        entries: Sequence[dict[str, Any]],
+        *,
+        parent_version_id: str | None,
+        source_kind: str,
+        source_ref: str | None,
+        note: str | None,
+        actor: str,
+    ) -> tuple[str, str]:
+        digest = self._rule_snapshot_hash(entries)
+        existing = self._conn.execute(
+            "SELECT id FROM rule_versions WHERE content_hash=?", (digest,)
+        ).fetchone()
+        if existing is not None:
+            return str(existing["id"]), digest
+        version_id = f"rv_{digest[:24]}"
+        self._conn.execute(
+            """
+            INSERT INTO rule_versions (
+                id, content_hash, parent_version_id, rule_count, snapshot_json,
+                source_kind, source_ref, note, created_by, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                version_id,
+                digest,
+                parent_version_id,
+                len(entries),
+                json.dumps(entries, ensure_ascii=False, sort_keys=True),
+                source_kind,
+                source_ref,
+                note,
+                actor,
+                datetime.now().isoformat(),
+            ),
+        )
+        return version_id, digest
+
+    def _replace_live_rules(self, entries: Sequence[dict[str, Any]]) -> None:
+        self._conn.execute("DELETE FROM rules")
+        self._conn.executemany(
+            """
+            INSERT INTO rules (
+                id, academic_year, college, category, level, rank, item_name, score,
+                synonyms, constraints, source, priority, enabled, raw_text,
+                extraction_batch_id, created_at
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            """,
+            [self._rule_insert_row(entry) for entry in entries],
+        )
+
+    @staticmethod
+    def _rule_insert_row(entry: dict[str, Any]) -> tuple[Any, ...]:
+        rule = Rule.model_validate(entry["rule"])
+        return (
+            rule.id,
+            rule.academic_year,
+            rule.college,
+            rule.category,
+            rule.level,
+            rule.rank,
+            rule.item_name,
+            rule.score,
+            json.dumps(rule.synonyms, ensure_ascii=False),
+            rule.constraints.model_dump_json(),
+            rule.source.model_dump_json(),
+            rule.priority,
+            int(rule.enabled),
+            rule.raw_text,
+            entry.get("extraction_batch_id"),
+            rule.created_at.isoformat(),
+        )
+
+    def _append_rule_version_event(
+        self,
+        *,
+        action: Literal["bootstrap", "publish", "rollback"],
+        version_id: str,
+        previous_version_id: str | None,
+        actor: str,
+        note: str | None,
+        created_at: str | None = None,
+    ) -> None:
+        self._conn.execute(
+            """
+            INSERT INTO rule_version_events (
+                action, version_id, previous_version_id, actor, note, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                action,
+                version_id,
+                previous_version_id,
+                actor,
+                note,
+                created_at or datetime.now().isoformat(),
+            ),
+        )
+
+    @staticmethod
+    def _decode_snapshot(snapshot_json: str, *, version_id: str) -> list[dict[str, Any]]:
+        try:
+            payload = json.loads(snapshot_json)
+            if not isinstance(payload, list):
+                raise TypeError("snapshot must be a list")
+            entries = []
+            for entry in payload:
+                if not isinstance(entry, dict) or "rule" not in entry:
+                    raise TypeError("snapshot entry is invalid")
+                rule = Rule.model_validate(entry["rule"])
+                entries.append(
+                    {
+                        "rule": rule.model_dump(mode="json"),
+                        "extraction_batch_id": entry.get("extraction_batch_id"),
+                    }
+                )
+            Ruleset(rules=[Rule.model_validate(entry["rule"]) for entry in entries])
+            return entries
+        except Exception as exc:
+            raise SchemaValidationError(
+                f"规则版本快照损坏：{version_id}", detail={"version_id": version_id}
+            ) from exc
+
+    @staticmethod
+    def _row_to_rule_version(
+        row: sqlite3.Row, *, active_id: str | None
+    ) -> RuleVersionRecord:
+        return RuleVersionRecord(
+            version_id=row["id"],
+            content_hash=row["content_hash"],
+            parent_version_id=row["parent_version_id"],
+            rule_count=row["rule_count"],
+            source_kind=row["source_kind"],
+            source_ref=row["source_ref"],
+            note=row["note"],
+            created_by=row["created_by"],
+            created_at=row["created_at"],
+            active=row["id"] == active_id,
+        )
+
+    def _before_rule_version_activation(self, version_id: str) -> None:
+        """故障注入钩子；异常会回滚规则表、快照、指针与审计。"""
 
     def set_enabled(self, rule_id: str, enabled: bool) -> bool:
-        with self._conn:
-            cur = self._conn.execute(
-                "UPDATE rules SET enabled = ? WHERE id = ?", (int(enabled), rule_id)
-            )
-        return cur.rowcount > 0
+        entries = self._current_snapshot_entries()
+        changed = False
+        for entry in entries:
+            if entry["rule"]["id"] == rule_id:
+                entry["rule"]["enabled"] = enabled
+                changed = True
+                break
+        if not changed:
+            return False
+        self.publish_rule_snapshot(
+            [entry["rule"] for entry in entries],
+            extraction_batch_ids={
+                entry["rule"]["id"]: entry["extraction_batch_id"] for entry in entries
+            },
+            actor="scoreproof:store",
+            source_kind="status_change",
+            source_ref=rule_id,
+            note=f"设置 enabled={enabled}",
+            expected_active_version=self._active_rule_version_id(),
+        )
+        return True
 
     # ---------- 读取 ----------
 
@@ -259,7 +805,17 @@ class RuleStore:
             return [self._row_to_rule(row) for row in cur.fetchall()]
 
     def load_ruleset(self, **kwargs) -> Ruleset:
-        return Ruleset(rules=self.list_rules(**kwargs))
+        active = self.active_rule_version()
+        return Ruleset(
+            rules=self.list_rules(**kwargs),
+            version=active.version_id if active is not None else "unversioned",
+            meta={
+                "rule_version_id": active.version_id,
+                "rule_content_hash": active.content_hash,
+            }
+            if active is not None
+            else {},
+        )
 
     def count(self, *, academic_year: str | None = None) -> int:
         sql = "SELECT COUNT(*) FROM rules"
@@ -286,6 +842,7 @@ class RuleStore:
             "priority": row["priority"],
             "enabled": bool(row["enabled"]),
             "raw_text": row["raw_text"],
+            "created_at": row["created_at"] or datetime.now().isoformat(),
         }
         try:
             return Rule.model_validate(payload)
@@ -392,10 +949,28 @@ class RuleStore:
             "SELECT status FROM extraction_batches WHERE id=?", (report.batch_id,)
         ).fetchone()
         if published is not None and published["status"] == "published":
-            return int(
+            active_count = int(
                 self._conn.execute(
                     "SELECT COUNT(*) FROM rules WHERE extraction_batch_id=?", (report.batch_id,)
                 ).fetchone()[0]
+            )
+            if active_count:
+                return active_count
+            historical = self._conn.execute(
+                """
+                SELECT id FROM rule_versions
+                WHERE source_kind='llm_extraction' AND source_ref=?
+                ORDER BY created_at DESC LIMIT 1
+                """,
+                (report.batch_id,),
+            ).fetchone()
+            raise VersionConflict(
+                "抽取批次曾发布但当前快照已回滚；请显式回滚到对应规则版本",
+                detail={
+                    "batch_id": report.batch_id,
+                    "rule_version_id": historical["id"] if historical is not None else None,
+                    "active_version": self._active_rule_version_id(),
+                },
             )
         if not report.publishable:
             self.record_extraction_report(report, model=model, status="blocked")
@@ -405,8 +980,10 @@ class RuleStore:
             )
 
         rules = report.rules()
+        expected_active_version = self._active_rule_version_id()
+        current_entries = self._current_snapshot_entries()
         existing: dict[tuple[str, str, str, str, str, str], set[float]] = {}
-        for rule in self.list_rules(enabled_only=False):
+        for rule in (Rule.model_validate(entry["rule"]) for entry in current_entries):
             key = (
                 rule.academic_year,
                 rule.college or "",
@@ -437,39 +1014,54 @@ class RuleStore:
                 detail={"batch_id": report.batch_id, "conflicts": conflicts},
             )
 
-        rows = [
-            (
-                rule.id,
-                rule.academic_year,
-                rule.college,
-                rule.category,
-                rule.level,
-                rule.rank,
-                rule.item_name,
-                rule.score,
-                json.dumps(rule.synonyms, ensure_ascii=False),
-                rule.constraints.model_dump_json(),
-                rule.source.model_dump_json(),
-                rule.priority,
-                int(rule.enabled),
-                rule.raw_text,
-                report.batch_id,
-                rule.created_at.isoformat(),
-            )
-            for rule in rules
+        new_entries = [
+            self._snapshot_entry(rule, extraction_batch_id=report.batch_id) for rule in rules
         ]
-        with self._conn:
+        combined_by_id = {entry["rule"]["id"]: entry for entry in current_entries}
+        for entry in new_entries:
+            identity_id = self._stable_identity_for_entry(entry)
+            matching_ids = [
+                current_id
+                for current_id, current in combined_by_id.items()
+                if self._stable_identity_for_entry(current) == identity_id
+            ]
+            for current_id in matching_ids:
+                combined_by_id.pop(current_id)
+            combined_by_id[entry["rule"]["id"]] = entry
+        combined = list(combined_by_id.values())
+        Ruleset(rules=[Rule.model_validate(entry["rule"]) for entry in combined])
+        combined.sort(key=lambda entry: str(entry["rule"]["id"]))
+        with self._transaction():
+            active_version = self._active_rule_version_id()
+            if active_version != expected_active_version:
+                raise VersionConflict(
+                    "活动规则版本已变化，请基于最新版本重新执行抽取发布",
+                    detail={
+                        "expected_active_version": expected_active_version,
+                        "active_version": active_version,
+                        "batch_id": report.batch_id,
+                    },
+                )
             self._write_extraction_report(report, model=model, status="published")
-            self._conn.executemany(
-                """
-                INSERT INTO rules (id, academic_year, college, category, level, rank, item_name, score,
-                                   synonyms, constraints, source, priority, enabled, raw_text,
-                                   extraction_batch_id, created_at)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-                """,
-                rows,
+            version_id, _ = self._ensure_rule_version(
+                combined,
+                parent_version_id=active_version,
+                source_kind="llm_extraction",
+                source_ref=report.batch_id,
+                note=f"发布规则抽取批次 {report.batch_id}",
+                actor="scoreproof:rule-extractor",
             )
-        return len(rows)
+            self._replace_live_rules(combined)
+            self._before_rule_version_activation(version_id)
+            self._set_active_rule_version_id(version_id)
+            self._append_rule_version_event(
+                action="publish",
+                version_id=version_id,
+                previous_version_id=active_version,
+                actor="scoreproof:rule-extractor",
+                note=f"规则抽取批次 {report.batch_id}",
+            )
+        return len(rules)
 
     def _write_extraction_report(
         self,
@@ -591,4 +1183,12 @@ def import_json(path: str | Path) -> Ruleset:
     return Ruleset.from_json(path)
 
 
-__all__ = ["SCHEMA_SQL", "RuleStore", "export_json", "import_json"]
+__all__ = [
+    "SCHEMA_SQL",
+    "RuleStore",
+    "RuleVersionEvent",
+    "RuleVersionRecord",
+    "RuleVersionResult",
+    "export_json",
+    "import_json",
+]

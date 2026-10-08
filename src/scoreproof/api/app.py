@@ -8,6 +8,7 @@ V3.0 的 P0 仅保留最小演示 API；完整 Web 三端延后至 P2。
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import uuid
 from collections.abc import AsyncIterator
@@ -178,9 +179,10 @@ class AppState:
     def load_ruleset(self) -> Ruleset:
         """优先从 SQLite 读；没有则尝试 data/rules/rules.json。"""
         try:
-            rules = self.store.list_rules()
-            if rules:
-                self.ruleset = Ruleset(rules=rules, meta={"origin": str(self.settings.db_path)})
+            ruleset = self.store.load_ruleset()
+            if ruleset.rules:
+                ruleset.meta["origin"] = str(self.settings.db_path)
+                self.ruleset = ruleset
                 return self.ruleset
         except Exception:  # pragma: no cover - 首次运行数据库为空
             pass
@@ -363,9 +365,19 @@ def create_app() -> FastAPI:
             rules = load_rules(tmp, academic_year=year, college=college)
         except ScoreProofError as exc:
             raise HTTPException(status_code=400, detail=exc.to_dict()) from exc
-        n = st.store.upsert_rules(rules)
+        n = st.store.upsert_rules(
+            rules,
+            actor="api:rules-import",
+            source_kind="api_excel_import",
+            source_ref=f"sha256:{hashlib.sha256(tmp.read_bytes()).hexdigest()}",
+        )
         st.load_ruleset()
-        return {"imported": n, "total": len(st.ruleset), "academic_year": year}
+        return {
+            "imported": n,
+            "total": len(st.ruleset),
+            "academic_year": year,
+            "rule_version": st.ruleset.version,
+        }
 
     # ---------------- 核算 ----------------
 

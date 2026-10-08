@@ -135,6 +135,14 @@ class TestLoadRules:
         rules = load_rules(rules_excel, academic_year="2025-2026", college="计算机学院", priority=3)
         assert all(r.college == "计算机学院" and r.priority == 3 for r in rules)
 
+    def test_rule_ids_are_stable_across_reloads_and_metadata_revisions(
+        self, rules_excel: Path
+    ) -> None:
+        first = load_rules(rules_excel, academic_year="2025-2026")
+        second = load_rules(rules_excel, academic_year="2025-2026", priority=5)
+        assert [rule.id for rule in first] == [rule.id for rule in second]
+        assert len({rule.id for rule in first}) == len(first)
+
     def test_missing_required_column_raises(self, tmp_path: Path) -> None:
         from scoreproof.errors import DataSourceError
 

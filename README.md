@@ -107,7 +107,7 @@ scoreproof/
 │   ├── api/                  # FastAPI + SSE
 │   └── cli.py                # typer 命令行
 ├── reports/                  # 可复跑评测报告（样本量、版本、置信区间）
-├── tests/                    # 451 项自动化测试（合成/公开数据，无隐私）
+├── tests/                    # 463 项自动化测试（合成/公开数据，无隐私）
 └── web/                      # 前端占位（V3.0：P2 延后）
 ```
 
@@ -178,6 +178,9 @@ scoreproof/
 | `scoreproof parse-claims 综测表.xlsx` | 解析申报条目（含合并单元格 fill-down） |
 | `scoreproof import-rules 规则表.xlsx -y 2025-2026` | 规则入库（建议人工校对一遍） |
 | `scoreproof list-rules -y 2025-2026` | 查看规则库 |
+| `scoreproof list-rule-versions --json` | 查看内容寻址的不可变规则快照与活动版本；同一来源重复导入保持幂等 |
+| `scoreproof rule-version-audit --json` | 查看只追加的规则发布/回滚审计链 |
+| `scoreproof rollback-rule-version <rv_id> --expected-version <current_rv>` | 用乐观锁把规则表与活动指针原子切回历史完整快照 |
 | `scoreproof ask-score "省级二等奖能加多少分" --student-id TEST-USER -y 2025-2026 --category 学科竞赛 --level 省级二等奖` | 真实工具编排入口；DeepSeek 不可用时自动降级，输出账本、状态轨迹与数字校验结果 |
 | `scoreproof calc 综测表.xlsx -y 2025-2026` | 批量核算，输出可回溯账目 |
 | `scoreproof explain 省二等奖` | 解释单条申报走哪个通道、引用哪段原文 |
@@ -272,7 +275,7 @@ uv run scoreproof backtest data/eval/backtest-2025-2026/claims.xlsx \
 | 阶段 4 | 增量索引、混合检索、LangChain 工具编排 | ✅ 4.1～4.5 已完成：索引、混合检索、五工具状态机、代码级引用门禁与成对拒答评测均通过真实 CLI/API 验收 |
 | 阶段 5 | 确定性计算与 52 人回测 | 🟡 逐人/逐项回测、双口径、完整差异与 52 人门禁已落地；5 人合成文件真实 CLI 通过，52 人脱敏历史数据待提供 |
 | 阶段 6 | OCR + LLM/VLM + 查重 + 人工复核 | 🟡 **6.1～6.4 工具链已落地但阶段未完成**：真实 RapidOCR + DeepSeek、联合查重/一致性及复核 SQLite/CLI/Uvicorn 主链路已跑通；VLM 未调用，n≥30 真实脱敏字段集与 n≥50 对独立真实查重集仍缺 |
-| 阶段 7 | 消融、全量评测与结项 | 🟡 **候选门禁、规则抽取评测、成本可观测、用户试用评测及一键演示已落地，阶段未完成**：合成演示及抽取烟雾链路不替代业务验收；尚无 n≥50 规则金标、已授权真实用户记录，其他正式数据、VLM、52 人回测及完整货币成本仍阻塞 |
+| 阶段 7 | 消融、全量评测与结项 | 🟡 **候选门禁、规则抽取评测、成本可观测、用户试用评测、一键演示及规则版本发布加固已落地，阶段未完成**：合成演示及抽取烟雾链路不替代业务验收；尚无 n≥50 规则金标、已授权真实用户记录，其他正式数据、VLM、52 人回测及完整货币成本仍阻塞 |
 
 ## 测试
 
@@ -291,9 +294,11 @@ uv run scoreproof backtest data/eval/backtest-2025-2026/claims.xlsx \
 
 查重烟雾报告见 `reports/evidence-dedup-smoke-v1.json`：真实 CLI 读取合成奖状文件及其完全相同、JPEG 压缩、亮度变化、裁剪缩放变体，n=5（重复正例 4、不同奖状负例 1）的烟雾结果为 TP=4、FP=0、TN=1、FN=0；Recall/Precision 点估计虽均为 1.0，但各自 Wilson 95% CI 下界仅 0.5101。**该集合规模小、类别不充分且图片为合成，不具备 n≥50 对正式验收资格，数字不得写入简历。**
 
-阶段 7 就绪审计见 `reports/quality-gates-v1.json` 与 `reports/release-readiness-v1.json`：固定质量命令真实执行后 451 项测试、Ruff、mypy、`uv lock --offline --check` 和 `git diff --check` 均通过；由于当前变更尚未提交，候选冻结门禁仍阻塞。统一审计认可网关、A/B/C 三档消融、引用/拒答、编排护栏、人工复核工程链路和一键合成演示报告；复杂 PDF 与规则抽取当前均只算烟雾，且 n≥30 字段集、真实 VLM、n≥50 查重对、52 人回测和真实用户试用继续阻塞。**这只是阶段 7 工具链与真实入口验证，不代表 RC 或项目结项。**
+阶段 7 就绪审计见 `reports/quality-gates-v1.json` 与 `reports/release-readiness-v1.json`：固定质量命令真实执行后 463 项测试、Ruff、mypy、`uv lock --offline --check` 和 `git diff --check` 均通过；由于当前变更尚未提交，候选冻结门禁仍阻塞。统一审计认可网关、A/B/C 三档消融、引用/拒答、编排护栏、人工复核工程链路和一键合成演示报告；复杂 PDF 与规则抽取当前均只算烟雾，且 n≥30 字段集、真实 VLM、n≥50 查重对、52 人回测和真实用户试用继续阻塞。**这只是阶段 7 工具链与真实入口验证，不代表 RC 或项目结项。**
 
 一键演示报告见 `reports/demo-smoke-v1.json`：`scoreproof demo` 在全新隔离目录中启动 5 个真实 CLI 子进程，生成并读取 Excel/CSV、写入 SQLite，完成规则导入、5 人 13 项确定性核算、逐项回测及解释查询；9 个输入/输出产物均记录 SHA-256。输出目录非空时命令会拒绝覆盖，报告 Schema 不保存子进程业务输出。该数据全部由脚本合成，报告固定为 `smoke_test_only=true`、`formal_gate_eligible=false`，不能解除 52 人回测或任何真实数据门禁。
+
+规则版本烟雾报告见 `reports/rule-versioning-smoke-v1.json`：规则发布现在使用不可变内容寻址快照、活动版本指针、`BEGIN IMMEDIATE` 原子切换、expected-version 乐观锁和不可更新/删除的审计事件；Excel 与网关规则 ID 基于业务键和原文定位稳定生成，分值修订不改变 ID。已安装 CLI 对同一真实 `.xlsx` 重复导入后仍为 13 条规则、1 个版本和 1 条事件；随后发布 26 条规则的第二版本并跨进程回滚到 13 条，5 人 13 项核算仍成功。旧规则库只在隔离副本上完成自动基线迁移，首次用稳定 ID 重导后仍保持 13 条，第二次重导不新增事件。该输入为合成业务数据，因此只证明工程主链路，不是正式业务发布验收。
 
 成本可观测报告见 `reports/cost-summary-v1.json`：统一账本只保存模型、用途、token、材料/批次标识、缓存状态和时间，不保存提示词、回复、密钥或原始学号；只有配置独立 `SCOREPROOF_COST_ID_SALT` 时才以 HMAC 记录稳定用户摘要。当前累计 15 次外部调用，其中 1 次受限网络失败；14 次成功调用中 2 次返回 usage，合计输入 1,388、输出 416、总计 1,804 token，覆盖率仅 14.29%，因此不能把该 token 合计解释为全部调用成本。当前没有配置经账单确认的人民币单价，也没有真实学生批次，每 100 份材料和每名学生成本仍为 `null`，成本门禁保持警告。只读 API 为 `GET /api/costs/summary`。
 

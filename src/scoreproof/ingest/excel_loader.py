@@ -19,7 +19,7 @@ import pandas as pd
 
 from ..errors import DataSourceError
 from ..normalize import level_aliases, normalize_academic_year, normalize_category, normalize_level
-from ..schema import Claim, ConstraintSpec, Rule, SourceRef
+from ..schema import Claim, ConstraintSpec, Rule, SourceRef, stable_rule_id
 
 # ======================================================================
 # 通用工具
@@ -381,8 +381,16 @@ def load_rules(
             else category
         )
 
+        source = grid.source_ref(idx, table=grid.sheet, text=str(level_raw).strip())
         rules.append(
             Rule(
+                id=stable_rule_id(
+                    academic_year=year,
+                    college=college,
+                    category=category,
+                    level=res.canonical,
+                    source=source,
+                ),
                 academic_year=year,
                 college=college,
                 category=category,
@@ -397,7 +405,7 @@ def load_rules(
                     if col["clause"] and not _is_blank(row.get(col["clause"]))
                     else None,
                 ),
-                source=grid.source_ref(idx, table=grid.sheet, text=str(level_raw).strip()),
+                source=source,
                 priority=priority,
                 raw_text=str(level_raw).strip(),
             )

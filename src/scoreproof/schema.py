@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import uuid
@@ -165,6 +166,41 @@ class Rule(BaseModel):
     def sort_key(self) -> tuple:
         """同分规则裁决顺序：优先级降序 -> 分值降序 -> id 升序（保证可复现）。"""
         return (-self.priority, -self.score, self.id)
+
+
+def stable_rule_id(
+    *,
+    academic_year: str,
+    college: str | None,
+    category: str,
+    level: str,
+    source: SourceRef,
+    rank: str | None = None,
+    item_name: str | None = None,
+) -> str:
+    """按业务键与原文定位生成稳定规则 ID；分值变化仍视为同一规则修订。"""
+    identity = {
+        "academic_year": academic_year,
+        "college": college,
+        "category": category,
+        "level": level,
+        "rank": rank,
+        "item_name": item_name,
+        "source": {
+            "doc": source.doc,
+            "page": source.page,
+            "table": source.table,
+            "row": source.row,
+            "char_start": source.char_start,
+            "clause": (
+                source.clause
+                if source.row is None and source.char_start is None
+                else None
+            ),
+        },
+    }
+    raw = json.dumps(identity, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return f"r_{hashlib.sha256(raw.encode('utf-8')).hexdigest()[:20]}"
 
 
 class Ruleset(BaseModel):
