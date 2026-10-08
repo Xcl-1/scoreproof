@@ -12,7 +12,7 @@ import uuid
 from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal, cast
 
 import typer
 from rich.console import Console
@@ -21,6 +21,7 @@ from rich.table import Table
 from . import __version__
 from .calc.engine import EngineConfig, compute_all
 from .config import PROJECT_ROOT, get_settings
+from .errors import ScoreProofError
 from .eval.backtest import (
     item_reference_template,
     load_ground_truth,
@@ -68,6 +69,20 @@ from .retrieval.hybrid import BM25Retriever, HybridRetriever
 from .retrieval.query import rewrite_retrieval_query
 from .retrieval.rerank import FastEmbedReranker, RerankingRetriever
 from .retrieval.router import Retriever, Router, clauses_from_pdf_pages
+from .review import (
+    ReviewDismissReason,
+    ReviewDismissRequest,
+    ReviewPriority,
+    ReviewResolution,
+    ReviewResolveRequest,
+    ReviewStatus,
+    ReviewStore,
+    ReviewTaskType,
+    ReviewValue,
+    enqueue_certificate_reviews,
+    enqueue_consistency_reviews,
+    enqueue_duplicate_review,
+)
 from .rules.extractor import LLMExtractor
 from .rules.gateway import GatewayContext
 from .rules.store import RuleStore
@@ -325,9 +340,11 @@ def parse_pdf(
     """抽取 PDF 文本与表格，检查多栏、跨页表和扫描件风险。"""
     document = load_pdf_document(pdf) if with_tables else None
     pages = document.pages if document is not None else load_pdf(pdf, with_tables=False)
-    scanned = document.scanned_pages if document is not None else [
-        page.page for page in pages if page.is_probably_scanned
-    ]
+    scanned = (
+        document.scanned_pages
+        if document is not None
+        else [page.page for page in pages if page.is_probably_scanned]
+    )
     console.print(f"共 {len(pages)} 页；文本量 {sum(p.char_count for p in pages)} 字符")
     if document is not None:
         spanning = [table for table in document.logical_tables if table.spans_pages]
@@ -336,9 +353,7 @@ def parse_pdf(
             f"逻辑表 {len(document.logical_tables)} 个（跨页 {len(spanning)} 个）"
         )
     if scanned:
-        console.print(
-            f"[yellow]疑似扫描件页（需 OCR + 人工校对）：{scanned}[/yellow]"
-        )
+        console.print(f"[yellow]疑似扫描件页（需 OCR + 人工校对）：{scanned}[/yellow]")
     if out:
         payload = {
             "document": pdf.name,
@@ -485,9 +500,7 @@ def sync_pdf_hybrid(
     pages = load_pdf(pdf)
     scanned_pages = [page.page for page in pages if not page.text.strip()]
     if scanned_pages:
-        console.print(
-            f"[yellow]以下页面没有可索引文本，必须先 OCR，未发布索引：{scanned_pages}[/yellow]"
-        )
+        console.print(f"[yellow]以下页面没有可索引文本，必须先 OCR，未发布索引：{scanned_pages}[/yellow]")
         raise typer.Exit(code=2)
     chunks = _pdf_index_chunks(
         pdf=pdf,
@@ -762,8 +775,9 @@ def parse_claims(
     for col in ("学号", "姓名", "类别", "原文", "归一化等级"):
         preview.add_column(col)
     for c in claims[:10]:
-        preview.add_row(c.student_id, c.student_name or "", c.category, c.raw_text,
-                        c.level or "[red]未识别[/red]")
+        preview.add_row(
+            c.student_id, c.student_name or "", c.category, c.raw_text, c.level or "[red]未识别[/red]"
+        )
     console.print(preview)
     if out:
         out.parent.mkdir(parents=True, exist_ok=True)
@@ -824,14 +838,15 @@ def extract_certificate_command(
     image: Path = typer.Argument(..., exists=True, dir_okay=False, help="奖状/证书图片"),
     run_preprocess: bool = typer.Option(True, "--preprocess/--raw", help="是否预处理后再 OCR"),
     processed_dir: Path | None = typer.Option(None, "--processed-dir", help="预处理图片输出目录"),
-    confidence_threshold: float = typer.Option(
-        0.8, "--confidence-threshold", min=0.0, max=1.0
-    ),
+    confidence_threshold: float = typer.Option(0.8, "--confidence-threshold", min=0.0, max=1.0),
     vlm_provider: str | None = typer.Option(
         None, "--vlm-provider", help="仅覆盖触发判断：qwen-vl-plus 或 glm-4v"
     ),
     out: Path | None = typer.Option(None, "--out", help="导出完整 JSON（含 Evidence）"),
     cost_db: Path | None = typer.Option(None, "--cost-db", help="模型 token/成本账本 SQLite"),
+    review_db: Path | None = typer.Option(
+        None, "--review-db", help="写入人工复核任务的 SQLite；省略则只输出抽取结果"
+    ),
 ) -> None:
     """真实图片 -> RapidOCR -> DeepSeek 文本结构化 -> 校验/置信度/复核状态。"""
     settings = get_settings()
@@ -845,7 +860,13 @@ def extract_certificate_command(
             cost_ledger=ledger,
             batch_id=f"certificate:{_file_sha256(image)[:16]}",
         )
-    encoded = result.model_dump_json(indent=2, by_alias=True)
+    review_tasks = []
+    if review_db is not None:
+        with ReviewStore(review_db) as review_store:
+            review_tasks = enqueue_certificate_reviews(review_store, result)
+    payload = result.model_dump(mode="json", by_alias=True)
+    payload["review_task_ids"] = [task.review_task_id for task in review_tasks]
+    encoded = json.dumps(payload, ensure_ascii=False, indent=2)
     console.print_json(encoded)
     if result.extraction.vlm.requested and not result.extraction.vlm.called:
         console.print("[yellow]VLM 未调用；低置信字段已明确转入人工复核。[/yellow]")
@@ -949,6 +970,7 @@ def compare_evidence_command(
     phash_definite_max: int = typer.Option(2, "--phash-definite-max", min=0, max=64),
     phash_suspected_max: int = typer.Option(10, "--phash-suspected-max", min=0, max=64),
     out: Path | None = typer.Option(None, "--out", help="导出查重决策 JSON"),
+    review_db: Path | None = typer.Option(None, "--review-db", help="命中重复时写入人工复核任务的 SQLite"),
 ) -> None:
     """真实文件/Evidence JSON -> SHA-256 + pHash + 字段事实联合查重。"""
     limits = DuplicateThresholds(
@@ -960,7 +982,13 @@ def compare_evidence_command(
         _load_evidence_source(right, right_fields),
         thresholds=limits,
     )
-    encoded = decision.model_dump_json(indent=2)
+    review_tasks = []
+    if review_db is not None:
+        with ReviewStore(review_db) as review_store:
+            review_tasks = enqueue_duplicate_review(review_store, decision)
+    payload = decision.model_dump(mode="json")
+    payload["review_task_ids"] = [task.review_task_id for task in review_tasks]
+    encoded = json.dumps(payload, ensure_ascii=False, indent=2)
     console.print_json(encoded)
     if out:
         out.parent.mkdir(parents=True, exist_ok=True)
@@ -976,6 +1004,9 @@ def check_evidence_consistency_command(
         None, "--policy", exists=True, dir_okay=False, help="别名/目录/颁发单位策略 JSON"
     ),
     out: Path | None = typer.Option(None, "--out", help="导出逐字段一致性报告"),
+    review_db: Path | None = typer.Option(
+        None, "--review-db", help="冲突/信息不足时写入人工复核任务的 SQLite"
+    ),
 ) -> None:
     """确定性比对申报与证据；信息不足不会当作一致。"""
     claim_payload = _json_object(claim_json)
@@ -984,7 +1015,13 @@ def check_evidence_consistency_command(
     evidence = Evidence.model_validate(evidence_payload.get("evidence", evidence_payload))
     policy = ConsistencyPolicy.model_validate(_json_object(policy_json)) if policy_json else None
     report = compare_claim_evidence(claim, evidence, policy=policy)
-    encoded = report.model_dump_json(indent=2)
+    review_tasks = []
+    if review_db is not None:
+        with ReviewStore(review_db) as review_store:
+            review_tasks = enqueue_consistency_reviews(review_store, report)
+    payload = report.model_dump(mode="json")
+    payload["review_task_ids"] = [task.review_task_id for task in review_tasks]
+    encoded = json.dumps(payload, ensure_ascii=False, indent=2)
     console.print_json(encoded)
     if out:
         out.parent.mkdir(parents=True, exist_ok=True)
@@ -1020,6 +1057,144 @@ def eval_evidence_dedup_command(
         console.print(f"已写出：{out}")
 
 
+def _review_database(path: Path | None) -> Path:
+    return path or get_settings().db_path
+
+
+def _review_failure(exc: Exception) -> None:
+    if isinstance(exc, ScoreProofError):
+        payload = exc.to_dict()
+    else:
+        payload = {"code": "review_operation_failed", "message": str(exc)}
+    console.print_json(json.dumps(payload, ensure_ascii=False))
+    raise typer.Exit(code=2) from exc
+
+
+@app.command("review-list")
+def review_list_command(
+    db: Path | None = typer.Option(None, "--db", help="复核队列 SQLite 路径"),
+    status: ReviewStatus | None = typer.Option(None, "--status"),
+    task_type: ReviewTaskType | None = typer.Option(None, "--type"),
+    priority: ReviewPriority | None = typer.Option(None, "--priority"),
+    evidence_id: str | None = typer.Option(None, "--evidence-id"),
+) -> None:
+    """按状态、类型、优先级或证据 ID 列出复核任务。"""
+    with ReviewStore(_review_database(db)) as store:
+        tasks = store.list_tasks(
+            status=status,
+            task_type=task_type,
+            priority=priority,
+            evidence_id=evidence_id,
+        )
+    console.print_json(
+        json.dumps(
+            {"count": len(tasks), "tasks": [task.model_dump(mode="json") for task in tasks]},
+            ensure_ascii=False,
+        )
+    )
+
+
+@app.command("review-show")
+def review_show_command(
+    task_id: str = typer.Argument(..., help="review_task_id"),
+    db: Path | None = typer.Option(None, "--db", help="复核队列 SQLite 路径"),
+) -> None:
+    """显示单个任务及其不可变审计轨迹。"""
+    with ReviewStore(_review_database(db)) as store:
+        task = store.get(task_id)
+        if task is None:
+            _review_failure(LookupError(f"复核任务不存在：{task_id}"))
+        assert task is not None
+        payload = {
+            "task": task.model_dump(mode="json"),
+            "audit_events": [item.model_dump(mode="json") for item in store.audit_events(task_id)],
+        }
+    console.print_json(json.dumps(payload, ensure_ascii=False))
+
+
+@app.command("review-start")
+def review_start_command(
+    task_id: str = typer.Argument(..., help="review_task_id"),
+    expected_revision: int = typer.Option(..., "--expected-revision", min=1),
+    operator_token: str = typer.Option(..., "--operator-token", help="脱敏操作员令牌"),
+    db: Path | None = typer.Option(None, "--db", help="复核队列 SQLite 路径"),
+) -> None:
+    """领取 pending 任务；revision 冲突或非法迁移以非零码退出。"""
+    try:
+        with ReviewStore(_review_database(db)) as store:
+            task = store.start(
+                task_id,
+                expected_revision=expected_revision,
+                operator_token=operator_token,
+            )
+    except (LookupError, ScoreProofError) as exc:
+        _review_failure(exc)
+    console.print_json(task.model_dump_json())
+
+
+@app.command("review-resolve")
+def review_resolve_command(
+    task_id: str = typer.Argument(..., help="review_task_id"),
+    expected_revision: int = typer.Option(..., "--expected-revision", min=1),
+    operator_token: str = typer.Option(..., "--operator-token", help="脱敏操作员令牌"),
+    resolution: ReviewResolution = typer.Option(..., "--resolution"),
+    corrected_value: str | None = typer.Option(
+        None, "--corrected-value", help="仅 resolution=corrected 时允许的单字段结构化值"
+    ),
+    db: Path | None = typer.Option(None, "--db", help="复核队列 SQLite 路径"),
+) -> None:
+    """记录人工结论；不会隐式修改原 Evidence。"""
+    try:
+        request = ReviewResolveRequest(
+            expected_revision=expected_revision,
+            resolver_token=operator_token,
+            resolution=resolution,
+            corrected_value=(ReviewValue(value=corrected_value) if corrected_value is not None else None),
+            apply_to_evidence=False,
+        )
+        with ReviewStore(_review_database(db)) as store:
+            task = store.resolve(task_id, request)
+    except (LookupError, ScoreProofError, ValueError) as exc:
+        _review_failure(exc)
+    console.print_json(task.model_dump_json())
+
+
+@app.command("review-dismiss")
+def review_dismiss_command(
+    task_id: str = typer.Argument(..., help="review_task_id"),
+    expected_revision: int = typer.Option(..., "--expected-revision", min=1),
+    operator_token: str = typer.Option(..., "--operator-token", help="脱敏操作员令牌"),
+    reason: ReviewDismissReason = typer.Option(..., "--reason"),
+    db: Path | None = typer.Option(None, "--db", help="复核队列 SQLite 路径"),
+) -> None:
+    """按结构化原因关闭任务；不会覆盖或删除历史审计。"""
+    try:
+        request = ReviewDismissRequest(
+            expected_revision=expected_revision,
+            resolver_token=operator_token,
+            reason=reason,
+        )
+        with ReviewStore(_review_database(db)) as store:
+            task = store.dismiss(task_id, request)
+    except (LookupError, ScoreProofError, ValueError) as exc:
+        _review_failure(exc)
+    console.print_json(task.model_dump_json())
+
+
+@app.command("review-export")
+def review_export_command(
+    out: Path = typer.Option(..., "--out", help="导出脱敏 JSON"),
+    db: Path | None = typer.Option(None, "--db", help="复核队列 SQLite 路径"),
+) -> None:
+    """导出任务与审计轨迹，不包含 Key、提示词、模型回复或原图。"""
+    with ReviewStore(_review_database(db)) as store:
+        payload = store.export()
+    encoded = json.dumps(payload, ensure_ascii=False, indent=2)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(encoded, encoding="utf-8")
+    console.print_json(encoded)
+
+
 @app.command("quality-gates")
 def quality_gates_command(
     out: Path = typer.Option(
@@ -1043,9 +1218,7 @@ def quality_gates_command(
 
 @app.command("release-readiness")
 def release_readiness_command(
-    candidate_version: str = typer.Option(
-        ..., "--candidate-version", help="待冻结的 Git 提交或版本标识"
-    ),
+    candidate_version: str = typer.Option(..., "--candidate-version", help="待冻结的 Git 提交或版本标识"),
     report_dir: Path = typer.Option(PROJECT_ROOT / "reports", "--report-dir"),
     out: Path = typer.Option(
         PROJECT_ROOT / "reports" / "release-readiness-v1.json",
@@ -1178,8 +1351,9 @@ def calc(
     sheet_arg: str | int = int(sheet) if sheet.isdigit() else sheet
     claims = load_claims(excel, sheet=sheet_arg, academic_year=academic_year)
     ruleset = _load_ruleset(db)
-    results = compute_all(claims, ruleset, academic_year=academic_year, college=college,
-                          config=EngineConfig())
+    results = compute_all(
+        claims, ruleset, academic_year=academic_year, college=college, config=EngineConfig()
+    )
     if student:
         results = {k: v for k, v in results.items() if k == student}
         if not results:
@@ -1224,8 +1398,7 @@ def calc(
     if out:
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(
-            json.dumps({sid: bd.to_dict() for sid, bd in results.items()},
-                       ensure_ascii=False, indent=2),
+            json.dumps({sid: bd.to_dict() for sid, bd in results.items()}, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
         console.print(f"已写出：{out}")
@@ -1242,8 +1415,9 @@ def explain(
     """解释单条申报走哪个通道、命中哪条规则、引用哪段原文。"""
     ruleset = _load_ruleset(db)
     router = Router(ruleset, academic_year=academic_year, college=college)
-    claim = Claim(student_id="demo", raw_text=text, category=category,
-                  academic_year=academic_year, college=college)
+    claim = Claim(
+        student_id="demo", raw_text=text, category=category, academic_year=academic_year, college=college
+    )
     console.print_json(json.dumps(router.explain(claim), ensure_ascii=False))
 
 
@@ -1278,12 +1452,8 @@ def extract_rules_llm(
         "--allowed-level",
         help="本文档允许的自定义等级/身份，可重复传入",
     ),
-    double_check: bool = typer.Option(
-        False, "--double-check", help="使用第二种提示独立抽取并交叉验证"
-    ),
-    publish: bool = typer.Option(
-        False, "--publish", help="人工确认后发布；未通过网关的批次仍会被强制阻止"
-    ),
+    double_check: bool = typer.Option(False, "--double-check", help="使用第二种提示独立抽取并交叉验证"),
+    publish: bool = typer.Option(False, "--publish", help="人工确认后发布；未通过网关的批次仍会被强制阻止"),
     report_out: Path | None = typer.Option(None, "--report-out", help="保存完整网关报告 JSON"),
     db: Path | None = typer.Option(None, "--db"),
 ) -> None:
@@ -1352,9 +1522,7 @@ def eval_extraction_gateway(
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(encoded, encoding="utf-8")
         console.print(f"已写出：{out}")
-    target_failed = any(
-        result.detection_rate < 0.99 for result in report.target_results.values()
-    )
+    target_failed = any(result.detection_rate < 0.99 for result in report.target_results.values())
     if report.detection_rate < 0.99 or target_failed:
         raise typer.Exit(code=2)
 
@@ -1463,9 +1631,10 @@ def backtest(
 ) -> None:
     """执行逐人、逐项回测；无业务裁决时只报告与历史人工结果的一致性。"""
     started = time.perf_counter()
-    normalized_mode = mode.strip().lower().replace("-", "_")
-    if normalized_mode not in {"historical_reference", "adjudicated_truth"}:
+    normalized_mode_value = mode.strip().lower().replace("-", "_")
+    if normalized_mode_value not in {"historical_reference", "adjudicated_truth"}:
         raise typer.BadParameter("--mode 只能是 historical-reference 或 adjudicated-truth")
+    normalized_mode = cast(Literal["historical_reference", "adjudicated_truth"], normalized_mode_value)
     claims = load_claims(excel, sheet=_sheet_arg(sheet), academic_year=academic_year)
     ruleset = _load_ruleset(db)
     ground_truth = load_ground_truth(
@@ -1490,7 +1659,7 @@ def backtest(
         ruleset,
         ground_truth,
         item_expectations=item_expectations,
-        mode=normalized_mode,  # type: ignore[arg-type]
+        mode=normalized_mode,
         required_students=required_students,
         academic_year=academic_year,
         college=college,
@@ -1515,9 +1684,7 @@ def backtest(
         )
     if out:
         out.parent.mkdir(parents=True, exist_ok=True)
-        out.write_text(
-            json.dumps(report.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8"
-        )
+        out.write_text(json.dumps(report.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8")
         console.print(f"已写出完整报告：{out}")
     if diff_out:
         diff_out.parent.mkdir(parents=True, exist_ok=True)

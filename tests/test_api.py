@@ -19,6 +19,7 @@ from fastapi.testclient import TestClient  # noqa: E402
 
 from scoreproof.api.app import app, get_state  # noqa: E402
 from scoreproof.indexing import DocumentChunk, HybridIndexManifestStore  # noqa: E402
+from scoreproof.review import fact_hash  # noqa: E402
 from scoreproof.rules.gateway import ExtractionGateway  # noqa: E402
 from scoreproof.schema import (  # noqa: E402
     Evidence,
@@ -89,6 +90,77 @@ class TestBase:
         assert body["source_database"] == "rules.sqlite"
         assert body["external_calls"] == 0
         assert "by_model" in body
+
+    def test_review_api_state_machine_and_error_codes(self, client: TestClient) -> None:
+        create_payload = {
+            "task_type": "manual_request",
+            "reason_codes": ["manual_request"],
+            "priority": "high",
+            "evidence_id": "evidence-review-api",
+            "field_name": "级别",
+            "current_normalized_value": {"value": "省级"},
+            "audit_metadata": {
+                "source_component": "manual",
+                "input_fact_hash": fact_hash({"api": "review", "id": 1}),
+                "trigger_version": "api-test-v1",
+                "sensitive_fields_redacted": True,
+            },
+        }
+        created = client.post("/api/reviews", json=create_payload)
+        assert created.status_code == 200
+        task = created.json()
+        task_id = task["review_task_id"]
+
+        duplicate = client.post("/api/reviews", json=create_payload)
+        assert duplicate.status_code == 200
+        assert duplicate.json()["review_task_id"] == task_id
+        assert client.get("/api/reviews", params={"status": "pending"}).json()["count"] == 1
+        assert client.get(f"/api/reviews/{task_id}").status_code == 200
+        assert client.get("/api/reviews/rvw_missing").status_code == 404
+
+        started = client.post(
+            f"/api/reviews/{task_id}/start",
+            json={"expected_revision": 1, "operator_token": "reviewer:api"},
+        )
+        assert started.status_code == 200
+        stale = client.post(
+            f"/api/reviews/{task_id}/resolve",
+            json={
+                "expected_revision": 1,
+                "resolver_token": "reviewer:api",
+                "resolution": "confirmed",
+                "apply_to_evidence": False,
+            },
+        )
+        assert stale.status_code == 409
+        invalid = client.post(
+            f"/api/reviews/{task_id}/resolve",
+            json={
+                "expected_revision": 2,
+                "resolver_token": "reviewer:api",
+                "resolution": "corrected",
+                "corrected_value": {"value": "不存在级别"},
+                "apply_to_evidence": False,
+            },
+        )
+        assert invalid.status_code == 422
+        resolved = client.post(
+            f"/api/reviews/{task_id}/resolve",
+            json={
+                "expected_revision": 2,
+                "resolver_token": "reviewer:api",
+                "resolution": "corrected",
+                "corrected_value": {"value": "省部级"},
+                "apply_to_evidence": False,
+            },
+        )
+        assert resolved.status_code == 200
+        assert resolved.json()["manual_corrected_value"] == {"value": "省级"}
+        illegal = client.post(
+            f"/api/reviews/{task_id}/start",
+            json={"expected_revision": 3, "operator_token": "reviewer:api"},
+        )
+        assert illegal.status_code == 409
 
     def test_user_trial_api_template_stays_blocked(self, client: TestClient) -> None:
         template = client.get("/api/eval/user-trial/template")
@@ -167,9 +239,7 @@ class TestBase:
         assert client.get("/openapi.json").status_code == 200
 
     def test_release_readiness_never_promotes_smoke_reports(self, client: TestClient) -> None:
-        response = client.get(
-            "/api/release-readiness", params={"candidate_version": "test-candidate"}
-        )
+        response = client.get("/api/release-readiness", params={"candidate_version": "test-candidate"})
         assert response.status_code == 200
         payload = response.json()
         assert payload["candidate_version"] == "test-candidate"
@@ -239,9 +309,7 @@ class TestCalc:
         def broken_factory(**kwargs):
             raise ImportError("langchain-openai unavailable")
 
-        monkeypatch.setattr(
-            "scoreproof.agent.orchestrator.make_deepseek_model", broken_factory
-        )
+        monkeypatch.setattr("scoreproof.agent.orchestrator.make_deepseek_model", broken_factory)
         response = client.post(
             "/api/agent",
             json={
@@ -285,9 +353,7 @@ class TestRetrievalEndpoints:
         body = client.post("/api/refusal-check", json={"claim": CLAIM_OK}).json()
         assert body["refused"] is False
 
-    def test_hybrid_search(
-        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_hybrid_search(self, client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
         settings = get_state().settings
         chunks = [
             DocumentChunk(

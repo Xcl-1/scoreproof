@@ -107,7 +107,7 @@ scoreproof/
 │   ├── api/                  # FastAPI + SSE
 │   └── cli.py                # typer 命令行
 ├── reports/                  # 可复跑评测报告（样本量、版本、置信区间）
-├── tests/                    # 436 项自动化测试（合成/公开数据，无隐私）
+├── tests/                    # 451 项自动化测试（合成/公开数据，无隐私）
 └── web/                      # 前端占位（V3.0：P2 延后）
 ```
 
@@ -164,6 +164,7 @@ scoreproof/
 | `scoreproof compare-evidence 左图.png 右图.jpg --out decision.json` | 用文件 SHA-256、pHash 汉明距离和结构化事实联合查重；只拦截/送审，不自动删除 |
 | `scoreproof check-evidence-consistency claim.json evidence.json --policy policy.json` | 逐字段核对姓名、赛事别名、等级奖项、学年、团队、单位/目录和类别；信息不足进入人工复核 |
 | `scoreproof eval-evidence-dedup pairs.json --out report.json` | 输出查重 Recall、Precision、F1、Wilson 区间与混淆矩阵；n<50 或非独立真实样本自动标记为仅烟雾测试 |
+| `scoreproof review-list --db review.sqlite --status pending` | 筛选人工复核队列；另有 `review-show/start/resolve/dismiss/export`，所有写操作校验 revision 并保留审计 |
 | `scoreproof quality-gates --out reports/quality-gates-v1.json` | 真实运行 pytest、Ruff、mypy、离线锁文件与 diff 检查，并记录 Git HEAD、耗时和工作树冻结状态 |
 | `scoreproof release-readiness --candidate-version <commit>` | 汇总 RC 门禁、报告 SHA-256、成本调用量和阻塞项；烟雾报告永远不能使正式门禁通过 |
 | `scoreproof cost-report --out reports/cost-summary-v1.json` | 从 `cost_events` 汇总真实 token、缓存命中、强模型/二次抽取比例及显式价格成本；缺价格时不猜金额 |
@@ -196,6 +197,19 @@ scoreproof/
 
 当前 `reports/rule-extraction-smoke-v1.json` 仅使用 1 条合成清晰规则。真实 DeepSeek CLI 调用和
 五道网关已跑通，1/1 完全匹配，但该数字只验证工程链路，不能作为正式抽取指标或简历数字。
+
+### 人工复核队列与审计闭环
+
+阶段 6.4 已实现严格复核任务 Schema、稳定业务事实 ID、活动任务幂等、终态后显式新 revision、
+`pending → in_progress/resolved/dismissed` 状态机、SQLite 乐观锁和不可更新/删除的审计事件。
+奖状低置信/原文不支持、VLM 未配置或失败、疑似/确定重复以及申报—证据冲突/信息不足均可
+写入队列；任务只记录受限结构化值，不保存 API Key、提示词、模型完整回复、原图或未脱敏姓名/学号。
+`review-resolve` 只记录人工结论或经日期/等级/奖项/团队属性校验的修正值，不会隐式改写原 Evidence。
+
+真实已安装 `scoreproof.exe` 已完成查重触发 → 列表 → 领取 → revision 冲突 → 解决 → 脱敏导出，
+真实 Uvicorn HTTP 已验证幂等创建、404、409、422 与解决链路；结果见
+`reports/review-workflow-smoke-v1.json`。该报告固定为 `smoke_test_only=true`、
+`formal_gate_eligible=false`，只证明工程主链路，不代表真实业务用户验收，也不解除阶段 6 的正式门禁。
 
 ### 52 人真实回测数据准备
 
@@ -257,7 +271,7 @@ uv run scoreproof backtest data/eval/backtest-2025-2026/claims.xlsx \
 | 阶段 3 | 五道抽取验证 + 独立发布冲突门禁 | ✅ 代码链路与 100 条分层冻结负例完成 |
 | 阶段 4 | 增量索引、混合检索、LangChain 工具编排 | ✅ 4.1～4.5 已完成：索引、混合检索、五工具状态机、代码级引用门禁与成对拒答评测均通过真实 CLI/API 验收 |
 | 阶段 5 | 确定性计算与 52 人回测 | 🟡 逐人/逐项回测、双口径、完整差异与 52 人门禁已落地；5 人合成文件真实 CLI 通过，52 人脱敏历史数据待提供 |
-| 阶段 6 | OCR + LLM/VLM + 查重 | 🟡 **6.1～6.3 工具链已落地但阶段未完成**：真实 RapidOCR + DeepSeek CLI/Uvicorn 上传 API、联合查重 CLI/API 与一致性入口已跑通；VLM 未调用，n≥30 真实脱敏字段集与 n≥50 对独立真实查重集仍缺 |
+| 阶段 6 | OCR + LLM/VLM + 查重 + 人工复核 | 🟡 **6.1～6.4 工具链已落地但阶段未完成**：真实 RapidOCR + DeepSeek、联合查重/一致性及复核 SQLite/CLI/Uvicorn 主链路已跑通；VLM 未调用，n≥30 真实脱敏字段集与 n≥50 对独立真实查重集仍缺 |
 | 阶段 7 | 消融、全量评测与结项 | 🟡 **候选门禁、规则抽取评测、成本可观测、用户试用评测及一键演示已落地，阶段未完成**：合成演示及抽取烟雾链路不替代业务验收；尚无 n≥50 规则金标、已授权真实用户记录，其他正式数据、VLM、52 人回测及完整货币成本仍阻塞 |
 
 ## 测试
@@ -277,7 +291,7 @@ uv run scoreproof backtest data/eval/backtest-2025-2026/claims.xlsx \
 
 查重烟雾报告见 `reports/evidence-dedup-smoke-v1.json`：真实 CLI 读取合成奖状文件及其完全相同、JPEG 压缩、亮度变化、裁剪缩放变体，n=5（重复正例 4、不同奖状负例 1）的烟雾结果为 TP=4、FP=0、TN=1、FN=0；Recall/Precision 点估计虽均为 1.0，但各自 Wilson 95% CI 下界仅 0.5101。**该集合规模小、类别不充分且图片为合成，不具备 n≥50 对正式验收资格，数字不得写入简历。**
 
-阶段 7 就绪审计见 `reports/quality-gates-v1.json` 与 `reports/release-readiness-v1.json`：固定质量命令真实执行后 436 项测试、Ruff、mypy、`uv lock --offline --check` 和 `git diff --check` 均通过；由于当前变更尚未提交，候选冻结门禁仍阻塞。统一审计认可网关、A/B/C 三档消融、引用/拒答、编排护栏和一键合成演示报告；复杂 PDF 与规则抽取当前均只算烟雾，且 n≥30 字段集、真实 VLM、n≥50 查重对、52 人回测和真实用户试用继续阻塞。**这只是阶段 7 工具链与真实入口验证，不代表 RC 或项目结项。**
+阶段 7 就绪审计见 `reports/quality-gates-v1.json` 与 `reports/release-readiness-v1.json`：固定质量命令真实执行后 451 项测试、Ruff、mypy、`uv lock --offline --check` 和 `git diff --check` 均通过；由于当前变更尚未提交，候选冻结门禁仍阻塞。统一审计认可网关、A/B/C 三档消融、引用/拒答、编排护栏、人工复核工程链路和一键合成演示报告；复杂 PDF 与规则抽取当前均只算烟雾，且 n≥30 字段集、真实 VLM、n≥50 查重对、52 人回测和真实用户试用继续阻塞。**这只是阶段 7 工具链与真实入口验证，不代表 RC 或项目结项。**
 
 一键演示报告见 `reports/demo-smoke-v1.json`：`scoreproof demo` 在全新隔离目录中启动 5 个真实 CLI 子进程，生成并读取 Excel/CSV、写入 SQLite，完成规则导入、5 人 13 项确定性核算、逐项回测及解释查询；9 个输入/输出产物均记录 SHA-256。输出目录非空时命令会拒绝覆盖，报告 Schema 不保存子进程业务输出。该数据全部由脚本合成，报告固定为 `smoke_test_only=true`、`formal_gate_eligible=false`，不能解除 52 人回测或任何真实数据门禁。
 

@@ -1,0 +1,23 @@
+{
+  "schema_version": "1.0",
+  "generated_at": "2026-10-02T05:04:00+00:00",
+  "dataset_kind": "synthetic_engineering_smoke",
+  "smoke_test_only": true,
+  "formal_gate_eligible": false,
+  "sample_task_count": 3,
+  "sqlite_persistence_passed": true,
+  "cli_flow_passed": true,
+  "uvicorn_http_passed": true,
+  "idempotency_passed": true,
+  "state_machine_passed": true,
+  "revision_conflict_passed": true,
+  "immutable_audit_passed": true,
+  "multimodal_sources_passed": true,
+  "no_implicit_evidence_mutation": true,
+  "sensitive_export_scan_passed": true,
+  "limitations": [
+    "本报告只验证合成工程事实上的真实 SQLite、已安装 scoreproof.exe CLI 与真实 Uvicorn HTTP 主链路，不代表真实业务用户验收。",
+    "没有调用真实视觉模型；vlm_called 纪律与正式 VLM 门禁保持不变。",
+    "本报告不解除奖状字段 n>=30、查重 n>=50、52 人回测、复杂 PDF、规则抽取或真实用户试用门禁。"
+  ]
+}

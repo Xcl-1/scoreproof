@@ -17,6 +17,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from ..review import ReviewWorkflowSmokeReport
 from .demo import DemoReport
 from .gateway import wilson_interval
 from .pdf_regression import PDFRegressionReport
@@ -122,6 +123,7 @@ _ARTIFACTS: tuple[tuple[str, str], ...] = (
     ("vlm", "vlm-integration-v1.json"),
     ("dedup", "evidence-dedup-formal-v1.json"),
     ("dedup_smoke", "evidence-dedup-smoke-v1.json"),
+    ("review_workflow", "review-workflow-smoke-v1.json"),
     ("backtest", "backtest-52-v1.json"),
     ("user_trial", "user-trial-v1.json"),
     ("demo", "demo-smoke-v1.json"),
@@ -599,6 +601,45 @@ def _dedup_gate(payload: dict[str, Any] | None, filename: str, smoke_exists: boo
     )
 
 
+def _review_workflow_gate(
+    payload: dict[str, Any] | None, filename: str
+) -> ReadinessGate:
+    if payload is None:
+        return _missing_gate("review_workflow", "人工复核队列与审计闭环", filename)
+    try:
+        report = ReviewWorkflowSmokeReport.model_validate(payload)
+    except ValueError as exc:
+        return ReadinessGate(
+            id="review_workflow",
+            title="人工复核队列与审计闭环",
+            required=True,
+            status="阻塞",
+            artifact=filename,
+            reasons=[f"复核工作流报告 Schema 无效：{exc}"],
+        )
+    passed = report.engineering_passed
+    return ReadinessGate(
+        id="review_workflow",
+        title="人工复核队列与审计闭环",
+        required=True,
+        status="通过" if passed else "阻塞",
+        artifact=filename,
+        sample_size=report.sample_task_count,
+        metrics={
+            "smoke_test_only": report.smoke_test_only,
+            "sqlite_persistence_passed": report.sqlite_persistence_passed,
+            "cli_flow_passed": report.cli_flow_passed,
+            "uvicorn_http_passed": report.uvicorn_http_passed,
+            "multimodal_sources_passed": report.multimodal_sources_passed,
+        },
+        reasons=(
+            ["真实 SQLite/CLI/Uvicorn 工程主链路通过；仅烟雾测试，不替代真实业务用户验收"]
+            if passed
+            else ["要求 SQLite、CLI、Uvicorn、状态机、revision、审计与多模态来源全部通过"]
+        ),
+    )
+
+
 def _simple_real_gate(
     payload: dict[str, Any] | None,
     *,
@@ -846,6 +887,7 @@ def build_release_readiness(
             failure_reason="必须使用受支持 VLM Key 完成必要裁剪区域的真实外部调用",
         ),
         _dedup_gate(payloads["dedup"], filenames["dedup"], payloads["dedup_smoke"] is not None),
+        _review_workflow_gate(payloads["review_workflow"], filenames["review_workflow"]),
         _simple_real_gate(
             payloads["backtest"],
             gate_id="backtest_52",
@@ -910,6 +952,7 @@ def build_release_readiness(
         cost_summary=cost,
         limitations=[
             "该审计只认可固定报告文件名；字段、查重等业务指标的 smoke 报告永远不能使正式门禁通过。",
+            "人工复核 smoke 只验证工程闭环，不解除字段、VLM、查重、52 人回测或真实用户试用门禁。",
             "阶段 5、6 的缺失真实数据或外部服务结果会保持阻塞，不因进入阶段 7 而豁免。",
         ],
     )

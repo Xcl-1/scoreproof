@@ -18,12 +18,12 @@ from typing import Any, Literal
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, StreamingResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from .. import __version__
 from ..calc.engine import EngineConfig, compute_claims
 from ..config import PROJECT_ROOT, get_settings
-from ..errors import ScoreProofError
+from ..errors import SchemaValidationError, ScoreProofError, VersionConflict
 from ..eval.readiness import build_release_readiness
 from ..eval.rule_extraction import RuleExtractionDataset, evaluate_rule_extraction
 from ..eval.user_trial import UserTrialDataset, evaluate_user_trials, user_trial_template
@@ -38,6 +38,21 @@ from ..retrieval.hybrid import HybridRetriever
 from ..retrieval.query import rewrite_retrieval_query
 from ..retrieval.rerank import FastEmbedReranker, RerankingRetriever
 from ..retrieval.router import Retriever, Router
+from ..review import (
+    ReviewAuditEvent,
+    ReviewDismissRequest,
+    ReviewPriority,
+    ReviewResolveRequest,
+    ReviewStartRequest,
+    ReviewStatus,
+    ReviewStore,
+    ReviewTask,
+    ReviewTaskCreate,
+    ReviewTaskType,
+    enqueue_certificate_reviews,
+    enqueue_consistency_reviews,
+    enqueue_duplicate_review,
+)
 from ..rules.extractor import LLMExtractor
 from ..rules.store import RuleStore
 from ..schema import Claim, Evidence, Ruleset
@@ -123,6 +138,20 @@ class HealthResponse(BaseModel):
     llm_configured: bool
 
 
+class ReviewListResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    count: int = Field(ge=0)
+    tasks: list[ReviewTask]
+
+
+class ReviewDetailResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    task: ReviewTask
+    audit_events: list[ReviewAuditEvent]
+
+
 # ======================================================================
 # 状态：规则库由入口一次性加载（阶段 4 改为增量索引）
 # ======================================================================
@@ -134,9 +163,7 @@ class AppState:
         self.ruleset: Ruleset = Ruleset()
         self.evidence: dict[str, Evidence] = {}
         self._store: RuleStore | None = None
-        self._embedding_cache: tuple[tuple[str, str | None, str], EmbeddingFunction, str] | None = (
-            None
-        )
+        self._embedding_cache: tuple[tuple[str, str | None, str], EmbeddingFunction, str] | None = None
         self._reranker_cache: tuple[tuple[str, str], FastEmbedReranker] | None = None
         self._agent_sessions: Any = None
 
@@ -326,9 +353,11 @@ def create_app() -> FastAPI:
         if not year:
             raise HTTPException(
                 status_code=400,
-                detail={"code": "schema_validation_error",
-                        "message": "无法确定学年，请在查询参数里显式传 academic_year=2025-2026",
-                        "detail": {"filename": tmp.name}},
+                detail={
+                    "code": "schema_validation_error",
+                    "message": "无法确定学年，请在查询参数里显式传 academic_year=2025-2026",
+                    "detail": {"filename": tmp.name},
+                },
             )
         try:
             rules = load_rules(tmp, academic_year=year, college=college)
@@ -383,16 +412,14 @@ def create_app() -> FastAPI:
     @app.post("/api/explain", tags=["retrieval"])
     def explain(req: ExplainRequest) -> dict:
         st = get_state()
-        router = Router(st.ensure_rules(), academic_year=req.claim.academic_year,
-                        college=req.claim.college)
+        router = Router(st.ensure_rules(), academic_year=req.claim.academic_year, college=req.claim.college)
         return router.explain(req.claim.to_claim(), top_k=req.top_k)
 
     @app.post("/api/refusal-check", tags=["retrieval"])
     def refusal_check(req: ExplainRequest) -> dict:
         """只关心"该不该拒答"的场景（简历指标：未找到规则时正确拒答率 100%）。"""
         st = get_state()
-        router = Router(st.ensure_rules(), academic_year=req.claim.academic_year,
-                        college=req.claim.college)
+        router = Router(st.ensure_rules(), academic_year=req.claim.academic_year, college=req.claim.college)
         res = router.route(req.claim.to_claim())
         return {"refused": res.refused, "channel": res.channel, "reason": res.reason}
 
@@ -528,6 +555,78 @@ def create_app() -> FastAPI:
             cost_ledger.close()
             audit_store.close()
 
+    # ---------------- 人工复核（阶段 6.4） ----------------
+
+    @app.post("/api/reviews", response_model=ReviewTask, tags=["reviews"])
+    def create_review(payload: ReviewTaskCreate) -> ReviewTask:
+        """人工指定复核；重复业务事实返回同一活动任务。"""
+        with ReviewStore(get_state().settings.db_path) as store:
+            return store.create(payload)[0]
+
+    @app.get("/api/reviews", response_model=ReviewListResponse, tags=["reviews"])
+    def list_reviews(
+        status: ReviewStatus | None = None,
+        task_type: ReviewTaskType | None = None,
+        priority: ReviewPriority | None = None,
+        evidence_id: str | None = None,
+    ) -> ReviewListResponse:
+        with ReviewStore(get_state().settings.db_path) as store:
+            tasks = store.list_tasks(
+                status=status,
+                task_type=task_type,
+                priority=priority,
+                evidence_id=evidence_id,
+            )
+        return ReviewListResponse(count=len(tasks), tasks=tasks)
+
+    @app.get("/api/reviews/{task_id}", response_model=ReviewDetailResponse, tags=["reviews"])
+    def show_review(task_id: str) -> ReviewDetailResponse:
+        with ReviewStore(get_state().settings.db_path) as store:
+            task = store.get(task_id)
+            if task is None:
+                raise HTTPException(status_code=404, detail="review_task_id 不存在")
+            return ReviewDetailResponse(task=task, audit_events=store.audit_events(task_id))
+
+    @app.post("/api/reviews/{task_id}/start", response_model=ReviewTask, tags=["reviews"])
+    def start_review(task_id: str, payload: ReviewStartRequest) -> ReviewTask:
+        try:
+            with ReviewStore(get_state().settings.db_path) as store:
+                return store.start(
+                    task_id,
+                    expected_revision=payload.expected_revision,
+                    operator_token=payload.operator_token,
+                )
+        except LookupError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except VersionConflict as exc:
+            raise HTTPException(status_code=409, detail=exc.to_dict()) from exc
+        except SchemaValidationError as exc:
+            raise HTTPException(status_code=422, detail=exc.to_dict()) from exc
+
+    @app.post("/api/reviews/{task_id}/resolve", response_model=ReviewTask, tags=["reviews"])
+    def resolve_review(task_id: str, payload: ReviewResolveRequest) -> ReviewTask:
+        try:
+            with ReviewStore(get_state().settings.db_path) as store:
+                return store.resolve(task_id, payload)
+        except LookupError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except VersionConflict as exc:
+            raise HTTPException(status_code=409, detail=exc.to_dict()) from exc
+        except SchemaValidationError as exc:
+            raise HTTPException(status_code=422, detail=exc.to_dict()) from exc
+
+    @app.post("/api/reviews/{task_id}/dismiss", response_model=ReviewTask, tags=["reviews"])
+    def dismiss_review(task_id: str, payload: ReviewDismissRequest) -> ReviewTask:
+        try:
+            with ReviewStore(get_state().settings.db_path) as store:
+                return store.dismiss(task_id, payload)
+        except LookupError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except VersionConflict as exc:
+            raise HTTPException(status_code=409, detail=exc.to_dict()) from exc
+        except SchemaValidationError as exc:
+            raise HTTPException(status_code=422, detail=exc.to_dict()) from exc
+
     # ---------------- 证据 / 多模态（阶段 6 最小入口） ----------------
 
     @app.post("/api/evidence/extract-certificate", tags=["evidence"])
@@ -565,7 +664,14 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=400, detail=exc.to_dict()) from exc
         st = get_state()
         st.evidence[result.evidence.id] = result.evidence
-        return result.model_dump(mode="json", by_alias=True)
+        review_tasks = []
+        if hasattr(result, "extraction") and hasattr(result, "quality"):
+            with ReviewStore(st.settings.db_path) as review_store:
+                review_tasks = enqueue_certificate_reviews(review_store, result)
+        return {
+            **result.model_dump(mode="json", by_alias=True),
+            "review_task_ids": [task.review_task_id for task in review_tasks],
+        }
 
     @app.post("/api/evidence", tags=["evidence"])
     def upsert_evidence(payload: EvidenceIn) -> dict:
@@ -593,16 +699,11 @@ def create_app() -> FastAPI:
             "by_phash": {k: v for k, v in by_phash.items() if len(v) > 1},
             "by_fingerprint": {k: v for k, v in by_fp.items() if len(v) > 1},
         }
-        decisions = [
-            compare_evidence(left, right)
-            for left, right in combinations(st.evidence.values(), 2)
-        ]
+        decisions = [compare_evidence(left, right) for left, right in combinations(st.evidence.values(), 2)]
         return {
             "total_evidence": len(st.evidence),
             "total_pairs": len(decisions),
-            "flagged_pairs": [
-                item.model_dump(mode="json") for item in decisions if item.flagged
-            ],
+            "flagged_pairs": [item.model_dump(mode="json") for item in decisions if item.flagged],
             **dupes,
         }
 
@@ -621,7 +722,13 @@ def create_app() -> FastAPI:
                 if evidence is None
             ]
             raise HTTPException(status_code=404, detail={"missing_evidence_ids": missing})
-        return compare_evidence(left, right, thresholds=payload.thresholds).model_dump(mode="json")
+        decision = compare_evidence(left, right, thresholds=payload.thresholds)
+        with ReviewStore(st.settings.db_path) as review_store:
+            review_tasks = enqueue_duplicate_review(review_store, decision)
+        return {
+            **decision.model_dump(mode="json"),
+            "review_task_ids": [task.review_task_id for task in review_tasks],
+        }
 
     @app.post("/api/evidence/check-claim", tags=["evidence"])
     def check_claim_evidence_api(payload: ClaimEvidenceCheckRequest) -> dict:
@@ -629,11 +736,17 @@ def create_app() -> FastAPI:
         evidence = get_state().evidence.get(payload.evidence_id)
         if evidence is None:
             raise HTTPException(status_code=404, detail="evidence_id 不存在")
-        return compare_claim_evidence(
+        report = compare_claim_evidence(
             payload.claim,
             evidence,
             policy=payload.policy,
-        ).model_dump(mode="json")
+        )
+        with ReviewStore(get_state().settings.db_path) as review_store:
+            review_tasks = enqueue_consistency_reviews(review_store, report)
+        return {
+            **report.model_dump(mode="json"),
+            "review_task_ids": [task.review_task_id for task in review_tasks],
+        }
 
     # ---------------- 调试页 ----------------
 
@@ -686,6 +799,7 @@ _INDEX_HTML = """<!doctype html>
  <li><code>POST /api/citation-check</code> — 核查真实索引引用并给出人工确认/拒答分支</li>
  <li><code>POST /api/refusal-check</code> — 未找到规则时是否正确拒答</li>
  <li><code>POST /api/agent</code> — 工具编排、结构化核算与数字/引用门禁</li>
+ <li><code>GET/POST /api/reviews</code> — 人工复核队列、revision 状态机与不可变审计</li>
  <li><code>GET/POST /api/eval/user-trial</code> — 无 PII 的试用模板与正式门禁评测</li>
 </ul>
 </body></html>"""

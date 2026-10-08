@@ -337,6 +337,37 @@ class TestReleaseReadiness:
         assert gate.sample_size == 5
         assert gate.metrics["smoke_test_only"] is True
 
+    def test_review_workflow_accepts_engineering_smoke_without_claiming_formal_acceptance(
+        self, tmp_path: Path
+    ) -> None:
+        _write(
+            tmp_path / "review-workflow-smoke-v1.json",
+            {
+                "schema_version": "1.0",
+                "generated_at": "2026-10-02T00:00:00+00:00",
+                "dataset_kind": "synthetic_engineering_smoke",
+                "smoke_test_only": True,
+                "formal_gate_eligible": False,
+                "sample_task_count": 4,
+                "sqlite_persistence_passed": True,
+                "cli_flow_passed": True,
+                "uvicorn_http_passed": True,
+                "idempotency_passed": True,
+                "state_machine_passed": True,
+                "revision_conflict_passed": True,
+                "immutable_audit_passed": True,
+                "multimodal_sources_passed": True,
+                "no_implicit_evidence_mutation": True,
+                "sensitive_export_scan_passed": True,
+                "limitations": ["仅工程烟雾，不代表真实业务用户验收"],
+            },
+        )
+        report = build_release_readiness(tmp_path, candidate_version="candidate")
+        gate = next(item for item in report.gates if item.id == "review_workflow")
+        assert gate.status == "通过"
+        assert gate.metrics["smoke_test_only"] is True
+        assert report.ready is False
+
     def test_invalid_json_is_snapshotted_and_cannot_pass(self, tmp_path: Path) -> None:
         (tmp_path / "gateway-negative-v2.json").write_text("not-json", encoding="utf-8")
         report = build_release_readiness(tmp_path, candidate_version="candidate")
