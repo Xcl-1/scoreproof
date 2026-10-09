@@ -2,12 +2,17 @@
 
 from __future__ import annotations
 
+import json
+import subprocess
+import sys
+import textwrap
 from pathlib import Path
 
 import pytest
 from typer.testing import CliRunner
 
 from scoreproof.cli import app
+from scoreproof.errors import VersionConflict
 from scoreproof.indexing import DocumentChunk, IndexManifestStore, document_hash, index_key
 from scoreproof.ingest.pdf_loader import PDFPage
 from scoreproof.schema import SourceRef
@@ -154,6 +159,130 @@ class TestManifestSync:
             assert store.active_chunks() == []
             assert store.manifest_count("rules-pdf") == 0
 
+    def test_stale_expected_manifest_rejects_publish_and_delete(
+        self, store: IndexManifestStore
+    ) -> None:
+        first = sync(store, [chunk("page:1", "第一版", page=1)])
+        second = sync(store, [chunk("page:1", "第二版", page=1)], raw=b"document-v2")
+
+        with pytest.raises(VersionConflict, match="manifest 已变化"):
+            store.sync_document(
+                doc_id="rules-pdf",
+                source_path="rules.pdf",
+                document_bytes=b"document-v3",
+                chunks=[chunk("page:1", "第三版", page=1)],
+                embedding_model="embedding-v1",
+                expected_current_manifest=first.manifest_id,
+            )
+        with pytest.raises(VersionConflict, match="manifest 已变化"):
+            store.delete_document(
+                "rules-pdf", expected_current_manifest=first.manifest_id
+            )
+
+        assert store.manifest_count("rules-pdf") == 2
+        assert store.active_chunks()[0].text == "第二版"
+        assert second.manifest_id is not None
+
+    def test_two_processes_publish_same_snapshot_once(self, tmp_path: Path) -> None:
+        worker = textwrap.dedent(
+            """
+            import json
+            import sys
+            import time
+            from scoreproof.indexing import DocumentChunk, IndexManifestStore
+            from scoreproof.schema import SourceRef
+
+            class SlowStore(IndexManifestStore):
+                def _before_publish(self, manifest_id):
+                    time.sleep(float(sys.argv[2]))
+
+            chunk = DocumentChunk(
+                logical_key="page:1",
+                text="跨进程同源发布",
+                kind="page",
+                source=SourceRef(doc="rules.pdf", page=1, text="跨进程同源发布"),
+            )
+            with SlowStore(sys.argv[1]) as store:
+                result = store.sync_document(
+                    doc_id="rules-pdf",
+                    source_path="rules.pdf",
+                    document_bytes=b"same-document",
+                    chunks=[chunk],
+                    embedding_model="embedding-v1",
+                )
+            print(json.dumps(result.model_dump(mode="json"), ensure_ascii=False))
+            """
+        )
+        db = tmp_path / "concurrent.sqlite"
+        first = subprocess.Popen(
+            [sys.executable, "-c", worker, str(db), "0.6"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding="utf-8",
+        )
+        second = subprocess.Popen(
+            [sys.executable, "-c", worker, str(db), "0"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding="utf-8",
+        )
+        first_out, first_err = first.communicate(timeout=30)
+        second_out, second_err = second.communicate(timeout=30)
+        assert first.returncode == 0, first_err
+        assert second.returncode == 0, second_err
+        actions = sorted(
+            [json.loads(first_out)["action"], json.loads(second_out)["action"]]
+        )
+        assert actions == ["published", "unchanged"]
+        with IndexManifestStore(db) as reopened:
+            assert reopened.manifest_count("rules-pdf") == 1
+            assert len(reopened.active_chunks(doc_id="rules-pdf")) == 1
+
+    def test_abrupt_process_exit_rolls_back_sqlite_snapshot(self, tmp_path: Path) -> None:
+        worker = textwrap.dedent(
+            """
+            import os
+            import sys
+            from scoreproof.indexing import DocumentChunk, IndexManifestStore
+            from scoreproof.schema import SourceRef
+
+            class CrashStore(IndexManifestStore):
+                def _before_publish(self, manifest_id):
+                    os._exit(91)
+
+            chunk = DocumentChunk(
+                logical_key="page:1",
+                text="崩溃前不得发布",
+                source=SourceRef(doc="rules.pdf", page=1),
+            )
+            with CrashStore(sys.argv[1]) as store:
+                store.sync_document(
+                    doc_id="rules-pdf",
+                    source_path="rules.pdf",
+                    document_bytes=b"crash-document",
+                    chunks=[chunk],
+                    embedding_model="embedding-v1",
+                )
+            """
+        )
+        db = tmp_path / "crash.sqlite"
+        crashed = subprocess.run(
+            [sys.executable, "-c", worker, str(db)],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            timeout=30,
+            check=False,
+        )
+        assert crashed.returncode == 91, crashed.stderr
+        with IndexManifestStore(db) as reopened:
+            assert reopened.manifest_count("rules-pdf") == 0
+            assert reopened.active_chunks() == []
+            repaired = sync(reopened, [chunk("page:1", "恢复后发布", page=1)])
+            assert repaired.action == "published"
+
 
 class TestManifestCli:
     def test_sync_pdf_manifest_command(self, tmp_path: Path, monkeypatch) -> None:
@@ -187,6 +316,25 @@ class TestManifestCli:
         assert result.exit_code == 0, result.output
         with IndexManifestStore(db) as store:
             assert store.active_chunks(doc_id="rules-pdf")[0].logical_key == "page:1"
+            assert store.manifest_count("rules-pdf") == 1
+
+        stale = CliRunner().invoke(
+            app,
+            [
+                "sync-pdf-manifest",
+                str(pdf),
+                "--doc-id",
+                "rules-pdf",
+                "--db",
+                str(db),
+                "--expected-manifest",
+                "im_stale",
+            ],
+        )
+        assert stale.exit_code == 2
+        assert "version_conflict" in stale.output
+        with IndexManifestStore(db) as store:
+            assert store.manifest_count("rules-pdf") == 1
 
     def test_sync_pdf_manifest_refuses_partial_scanned_snapshot(
         self, tmp_path: Path, monkeypatch

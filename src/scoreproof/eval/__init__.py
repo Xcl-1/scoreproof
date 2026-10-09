@@ -71,6 +71,7 @@ from .user_trial import (
     new_participant_token,
     user_trial_template,
 )
+from .vlm import VlmIntegrationReport, build_vlm_integration_report
 
 __all__ = [
     "BacktestMode",
@@ -107,7 +108,9 @@ __all__ = [
     "TrialSession",
     "UserTrialDataset",
     "UserTrialReport",
+    "VlmIntegrationReport",
     "build_ablation_report",
+    "build_vlm_integration_report",
     "claim_item_key",
     "compare_items",
     "compare_students",

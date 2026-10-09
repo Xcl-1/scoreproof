@@ -1,0 +1,43 @@
+{
+  "schema_version": "1.0",
+  "generated_at": "2026-10-08T08:57:18.932224Z",
+  "result": "passed",
+  "dataset_kind": "synthetic",
+  "smoke_test_only": true,
+  "formal_gate_eligible": false,
+  "source_sha256": "fceede5a3e47bc938eb4d82ac3c97c918ada770c01b77213e0af782f3218a623",
+  "result_sha256": "62ea025d017d3acba7d6cfef97e31c4c5b965038fb0da59156aa01d050abecf6",
+  "installed_cli": true,
+  "real_ocr": true,
+  "real_text_llm": true,
+  "real_vlm": true,
+  "vlm_provider": "qwen-vl-plus",
+  "whole_image_sent_to_vlm": false,
+  "crop_count": 6,
+  "vlm_suggestion_count": 6,
+  "evidence_overwrite_detected": false,
+  "manual_review_required": true,
+  "review_task_count": 7,
+  "review_audit_event_count": 7,
+  "review_sqlite_cross_process_read_passed": true,
+  "cost_events": [
+    {
+      "purpose": "certificate_text_extraction",
+      "status": "ok",
+      "input_tokens": 793,
+      "output_tokens": 809,
+      "total_tokens": 1602
+    },
+    {
+      "purpose": "certificate_vlm_crop",
+      "status": "ok",
+      "input_tokens": 376,
+      "output_tokens": 74,
+      "total_tokens": 450
+    }
+  ],
+  "limitations": [
+    "The input is a synthetic certificate, so this report is an engineering smoke test only.",
+    "This report does not satisfy the n>=30 certificate-field evaluation or real-user acceptance gates."
+  ]
+}

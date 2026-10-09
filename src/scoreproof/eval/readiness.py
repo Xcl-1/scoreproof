@@ -22,6 +22,7 @@ from .demo import DemoReport
 from .gateway import wilson_interval
 from .pdf_regression import PDFRegressionReport
 from .rule_extraction import RuleExtractionReport
+from .vlm import VlmIntegrationReport
 
 GateStatus = Literal["通过", "阻塞", "缺失", "仅烟雾", "警告"]
 
@@ -664,6 +665,55 @@ def _simple_real_gate(
     )
 
 
+def _vlm_gate(payload: dict[str, Any] | None, filename: str) -> ReadinessGate:
+    if payload is None:
+        return _missing_gate("vlm_integration", "真实视觉模型局部兜底", filename)
+    try:
+        report = VlmIntegrationReport.model_validate(payload)
+    except ValueError as exc:
+        return ReadinessGate(
+            id="vlm_integration",
+            title="真实视觉模型局部兜底",
+            required=True,
+            status="阻塞",
+            artifact=filename,
+            reasons=[f"VLM 集成报告 Schema 无效：{exc}"],
+        )
+    passed = bool(
+        report.result == "passed"
+        and report.real_external_service
+        and not report.whole_image_sent
+        and report.strict_schema_passed
+        and report.cost_event_recorded
+        and set(report.requested_fields) == set(report.returned_fields)
+    )
+    return ReadinessGate(
+        id="vlm_integration",
+        title="真实视觉模型局部兜底",
+        required=True,
+        status="通过" if passed else "阻塞",
+        artifact=filename,
+        sample_size=report.sample_size,
+        metrics={
+            "provider": report.provider,
+            "real_external_service": report.real_external_service,
+            "whole_image_sent": report.whole_image_sent,
+            "strict_schema_passed": report.strict_schema_passed,
+            "cost_event_recorded": report.cost_event_recorded,
+            "input_tokens": report.input_tokens,
+            "output_tokens": report.output_tokens,
+            "total_tokens": report.total_tokens,
+            "dataset_kind": report.dataset_kind,
+            "smoke_test_only": report.smoke_test_only,
+        },
+        reasons=(
+            ["真实外部 VLM 必要裁剪调用通过；仅验证工程集成，不替代字段正式评测"]
+            if passed and report.smoke_test_only
+            else ([] if passed else ["必须完成必要裁剪、严格响应校验与成本事件记录"])
+        ),
+    )
+
+
 def _user_trial_gate(payload: dict[str, Any] | None, filename: str) -> ReadinessGate:
     if payload is None:
         return _missing_gate("user_trial", "真实用户试用", filename)
@@ -803,6 +853,9 @@ def _cost_summary(payloads: Mapping[str, dict[str, Any] | None]) -> CostSummary:
     embedding_queries += int(_number(citation, "embedding_query_count") or 0)
     certificate = payloads.get("certificate") or payloads.get("certificate_smoke")
     vlm_calls += int(_number(certificate, "vlm_called") or 0)
+    vlm = payloads.get("vlm")
+    if vlm and vlm.get("result") == "passed" and vlm.get("real_external_service"):
+        vlm_calls = max(vlm_calls, int(_number(vlm, "sample_size") or 0))
     observed = payloads.get("cost") or {}
     external_calls = _number(observed, "external_calls")
     by_purpose = observed.get("by_purpose")
@@ -874,18 +927,7 @@ def build_release_readiness(
         _citation_gate(payloads["citation"], filenames["citation"]),
         _orchestration_gate(payloads["orchestration"], filenames["orchestration"]),
         _certificate_gate(payloads["certificate"], filenames["certificate"], payloads["certificate_smoke"] is not None),
-        _simple_real_gate(
-            payloads["vlm"],
-            gate_id="vlm_integration",
-            title="真实视觉模型局部兜底",
-            filename=filenames["vlm"],
-            validator=lambda value: (
-                value.get("result") == "passed" and bool(value.get("real_external_service")),
-                int(_number(value, "sample_size") or 0),
-                {"provider": value.get("provider"), "real_external_service": value.get("real_external_service")},
-            ),
-            failure_reason="必须使用受支持 VLM Key 完成必要裁剪区域的真实外部调用",
-        ),
+        _vlm_gate(payloads["vlm"], filenames["vlm"]),
         _dedup_gate(payloads["dedup"], filenames["dedup"], payloads["dedup_smoke"] is not None),
         _review_workflow_gate(payloads["review_workflow"], filenames["review_workflow"]),
         _simple_real_gate(

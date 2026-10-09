@@ -1,0 +1,88 @@
+{
+  "schema_version": "1.0",
+  "generated_at": "2026-10-08T07:37:51.5789495Z",
+  "dataset_kind": "real_public_document_engineering_smoke",
+  "smoke_test_only": true,
+  "formal_gate_eligible": false,
+  "source_head": "5843ec26b23e32ed1b7a4dd338b2878ba38775be",
+  "source_tree_clean": false,
+  "document": {
+    "name": "fzu_ccds_2026_recommendation_score_rules.pdf",
+    "sha256": "1c1fc3c899017e641f7a92430dd342634c4f50df5d67ebab6f5547e3d4b840c5",
+    "bytes": 260526,
+    "pages": 6,
+    "real_public_document": true
+  },
+  "same_snapshot_concurrency": {
+    "real_cli_processes": 2,
+    "process_exit_codes": [
+      0,
+      0
+    ],
+    "actions": [
+      "published",
+      "unchanged"
+    ],
+    "shared_manifest_id": "im_1a11d972216748b0",
+    "manifest_count": 1,
+    "active_batch_count": 1,
+    "bm25_document_count": 6,
+    "vector_document_count": 6,
+    "search_hit_count": 3,
+    "recovery_errors": 0,
+    "sqlite_sha256": "8e28e84be2674bc841c8318c5285dc9a97d246f7a9647c2467b900fed09510da",
+    "process_output_sha256": [
+      "cdeba2567eecf8493b0eb527f54fcb62b5511f67eeb0fd99c93336b726ab238a",
+      "68f6e116882e2e339fd9cf04d6f9a3a55e4bae4d7e7b1df092039af4c937a85d"
+    ]
+  },
+  "abrupt_exit_recovery": {
+    "fault_process_exit_code": 92,
+    "fault_point": "after_chroma_vector_build_before_sqlite_manifest_commit",
+    "sqlite_half_snapshot_visible": false,
+    "orphaned_collection_count": 1,
+    "removed_collection_count": 1,
+    "removed_collection": "scoreproof_im_83f1e5cb373f4a5f",
+    "recovery_errors": 0,
+    "recovery_cli_exit_code": 0,
+    "recovered_manifest_id": "im_06143d8d70d54b1f",
+    "recovered_bm25_document_count": 6,
+    "recovered_vector_document_count": 6,
+    "sqlite_sha256": "33de7e6d954994baa387359a49395ecdc09fa41f030e4dc984e94c9dc7168003"
+  },
+  "optimistic_lock": {
+    "stale_expected_manifest_rejected": true,
+    "installed_cli_exit_code": 1,
+    "error_code": "version_conflict",
+    "active_manifest_unchanged": true
+  },
+  "discovered_and_fixed": [
+    {
+      "issue": "两个进程首次打开新 SQLite 时可能在 PRAGMA journal_mode=WAL 处竞争并立即失败",
+      "initial_process_exit_codes": [
+        1,
+        0
+      ],
+      "fix": "保留 busy_timeout；若 WAL 模式切换锁正由另一进程持有，则当前连接安全继续，由获锁进程完成切换",
+      "final_process_exit_codes": [
+        0,
+        0
+      ]
+    }
+  ],
+  "verification": {
+    "automated_tests": 473,
+    "pytest_passed": true,
+    "ruff_passed": true,
+    "mypy_passed": true,
+    "uv_lock_offline_check_passed": true,
+    "git_diff_check_passed": true
+  },
+  "scope": "验证同一真实公开 PDF 经两个独立 CLI 进程并发同步时只发布一个完整 BM25/Chroma 快照，并验证向量写入后进程被强杀时 SQLite 不暴露半成品、下一次真实 CLI 自动清理无主集合后完整恢复。",
+  "limitations": [
+    "该测试验证单机 SQLite 与本地 Chroma 的进程级并发和崩溃恢复，不代表多主机分布式一致性。",
+    "使用 hash embedding 验证事务和发布语义，不替代预训练模型的检索效果评测。",
+    "只使用 1 份真实公开 PDF 做工程故障注入，不解除复杂 PDF 正式样本量门禁。",
+    "不解除规则抽取、多模态、52 人回测或真实用户试用等发布阻塞项。"
+  ]
+}

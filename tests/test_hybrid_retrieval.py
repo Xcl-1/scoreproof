@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import subprocess
+import sys
+import textwrap
 from pathlib import Path
 
 import pytest
@@ -151,6 +154,79 @@ def test_vector_failure_keeps_manifest_unpublished(tmp_path: Path) -> None:
         assert store.manifest_count("rules") == 0
         assert store.active_batches() == []
         assert store._chroma_client().list_collections() == []
+
+
+def test_abrupt_process_exit_removes_orphaned_chroma_on_reopen(tmp_path: Path) -> None:
+    worker = textwrap.dedent(
+        """
+        import os
+        import sys
+        from scoreproof.indexing import DocumentChunk, HashingEmbeddings, HybridIndexManifestStore
+        from scoreproof.schema import SourceRef
+
+        class CrashStore(HybridIndexManifestStore):
+            def _before_publish(self, manifest_id):
+                super()._before_publish(manifest_id)
+                os._exit(92)
+
+        chunk = DocumentChunk(
+            logical_key="page:1",
+            text="向量构建后进程崩溃",
+            source=SourceRef(doc="rules.pdf", page=1),
+        )
+        with CrashStore(
+            sys.argv[1],
+            vector_dir=sys.argv[2],
+            embeddings=HashingEmbeddings(dimensions=32),
+            embedding_model="crash-hash-v1",
+        ) as store:
+            store.sync_document(
+                doc_id="rules",
+                source_path="rules.pdf",
+                document_bytes=b"crash-vector-document",
+                chunks=[chunk],
+                embedding_model="crash-hash-v1",
+            )
+        """
+    )
+    db = tmp_path / "index.sqlite"
+    vectors = tmp_path / "chroma"
+    crashed = subprocess.run(
+        [sys.executable, "-c", worker, str(db), str(vectors)],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=30,
+        check=False,
+    )
+    assert crashed.returncode == 92, crashed.stderr
+
+    with HybridIndexManifestStore(
+        db,
+        vector_dir=vectors,
+        embeddings=HashingEmbeddings(dimensions=32),
+        embedding_model="crash-hash-v1",
+    ) as reopened:
+        assert reopened.manifest_count("rules") == 0
+        assert len(reopened.last_recovery.orphaned_collections) == 1
+        assert reopened.last_recovery.removed_collections == (
+            reopened.last_recovery.orphaned_collections
+        )
+        result = reopened.sync_document(
+            doc_id="rules",
+            source_path="rules.pdf",
+            document_bytes=b"recovered-vector-document",
+            chunks=[
+                DocumentChunk(
+                    logical_key="page:1",
+                    text="恢复后完整发布",
+                    source=SourceRef(doc="rules.pdf", page=1),
+                )
+            ],
+            embedding_model="crash-hash-v1",
+        )
+        assert result.action == "published"
+        assert len(reopened.active_batches(doc_id="rules")) == 1
 
 
 def test_delete_removes_batch_from_online_search(tmp_path: Path) -> None:
@@ -345,6 +421,7 @@ def test_hybrid_sync_and_search_cli(tmp_path: Path, monkeypatch: pytest.MonkeyPa
     )
     assert sync_result.exit_code == 0, sync_result.output
     assert '"bm25_doc_count": 4' in sync_result.output
+    assert '"removed_collections": []' in sync_result.output
 
     search_result = runner.invoke(
         app,

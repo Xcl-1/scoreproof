@@ -23,6 +23,7 @@ from ..ingest.image_loader import ImageQuality, OcrLine, OcrResult, check_qualit
 from ..normalize import parse_prize, parse_tier
 from ..observability import CostLedger, classify_model_tier, pricing_from_settings
 from ..schema import Evidence
+from .vlm import VlmProviderResponse, make_vlm_client
 
 CERTIFICATE_FIELD_NAMES: tuple[str, ...] = (
     "姓名",
@@ -148,6 +149,7 @@ class VlmDecision(BaseModel):
     eligible_fields: list[str] = Field(default_factory=list)
     reasons: list[str] = Field(default_factory=list)
     regions: list[VlmRegion] = Field(default_factory=list)
+    suggestions: dict[str, str | None] = Field(default_factory=dict)
 
 
 class CertificateExtraction(BaseModel):
@@ -656,7 +658,7 @@ def extract_with_vlm(
     out_dir: str | Path | None = None,
     cost_ledger: CostLedger | None = None,
     batch_id: str | None = None,
-) -> dict[str, Any]:
+) -> dict[str, str | None]:
     """受限 VLM 注入口：只允许调用方传入低置信字段和明确 bbox。
 
     本函数故意不接受“整图兜底”开关。未注入已配置客户端时显式失败，避免
@@ -682,11 +684,7 @@ def extract_with_vlm(
             "视觉模型缺少对应 Key，已转人工复核",
             detail={"provider": chosen, "required": key_name},
         )
-    if client is None:
-        raise UnsupportedModality(
-            "视觉模型客户端尚未注入，已转人工复核",
-            detail={"provider": chosen, "fields": list(fields)},
-        )
+    selected_client = client or make_vlm_client(chosen)
     try:
         from PIL import Image, ImageOps
     except ImportError as exc:  # pragma: no cover - multimodal extra 缺失
@@ -726,7 +724,7 @@ def extract_with_vlm(
         "crops": crops,
     }
     try:
-        response = client.invoke(payload)
+        response = selected_client.invoke(payload)
     except Exception as exc:
         if cost_ledger is not None:
             cost_ledger.record_failure(
@@ -739,9 +737,14 @@ def extract_with_vlm(
                 batch_id=batch_id,
             )
         raise
+    usage_response: Any = response
+    values_response: Any = response
+    if isinstance(response, VlmProviderResponse):
+        usage_response = {"usage": response.usage}
+        values_response = response.values
     if cost_ledger is not None:
         cost_ledger.record_response(
-            response,
+            usage_response,
             provider=chosen,
             model=chosen,
             model_tier="vision",
@@ -749,9 +752,20 @@ def extract_with_vlm(
             material_id=f"image:{_file_sha256(candidate)}",
             batch_id=batch_id,
         )
-    if not isinstance(response, Mapping):
+    if not isinstance(values_response, Mapping):
         raise SchemaValidationError("VLM 返回必须是结构化对象")
-    return dict(response)
+    if set(values_response) != set(fields):
+        raise SchemaValidationError(
+            "VLM 返回字段集合与请求不一致",
+            detail={"expected_fields": list(fields)},
+        )
+    output: dict[str, str | None] = {}
+    for field in fields:
+        value = values_response[field]
+        if value is not None and not isinstance(value, str):
+            raise SchemaValidationError("VLM 字段值必须是字符串或 null", detail={"field": field})
+        output[field] = value.strip() or None if isinstance(value, str) else None
+    return output
 
 
 def _quality_payload(quality: ImageQuality) -> QualityPayload:
@@ -787,6 +801,9 @@ def extract_certificate(
     extractor: CertificateTextExtractor | None = None,
     confidence_threshold: float = 0.8,
     provider: str | None = None,
+    call_vlm: bool = False,
+    vlm_client: Any | None = None,
+    vlm_crops_dir: str | Path | None = None,
     ocr_result: OcrResult | None = None,
     cost_ledger: CostLedger | None = None,
     batch_id: str | None = None,
@@ -808,6 +825,26 @@ def extract_certificate(
         confidence_threshold=confidence_threshold,
         provider=provider,
     )
+    if call_vlm and extraction.vlm.status == "ready":
+        try:
+            extraction.vlm.suggestions = extract_with_vlm(
+                target,
+                fields=extraction.vlm.eligible_fields,
+                regions=extraction.vlm.regions,
+                client=vlm_client,
+                provider=extraction.vlm.provider,
+                out_dir=vlm_crops_dir,
+                cost_ledger=cost_ledger,
+                batch_id=batch_id,
+            )
+            extraction.vlm.called = True
+            extraction.vlm.status = "called"
+            extraction.manual_review_reasons.append("VLM 建议已生成，仍需人工确认后才能应用")
+        except Exception as exc:
+            extraction.vlm.called = False
+            extraction.vlm.status = "failed"
+            extraction.vlm.reasons.append(f"VLM 调用失败：{type(exc).__name__}，转人工复核")
+            extraction.manual_review_reasons.append("VLM 调用失败，转人工复核")
     if quality.needs_retake:
         extraction.manual_review_required = True
         extraction.manual_review_status = "pending_manual_review"

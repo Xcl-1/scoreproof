@@ -50,7 +50,8 @@ from .eval.user_trial import (
     new_participant_token,
     user_trial_template,
 )
-from .evidence.certificate import extract_certificate
+from .eval.vlm import build_vlm_integration_report
+from .evidence.certificate import VlmRegion, extract_certificate, extract_with_vlm
 from .evidence.consistency import ConsistencyPolicy, compare_claim_evidence
 from .evidence.dedup import DuplicateThresholds, compare_evidence
 from .indexing import (
@@ -542,6 +543,11 @@ def sync_pdf_manifest(
         help="索引模型版本；阶段 4.2 接入向量前使用 unembedded-v1",
     ),
     db: Path | None = typer.Option(None, "--db", help="manifest 所在 SQLite"),
+    expected_manifest: str | None = typer.Option(
+        None,
+        "--expected-manifest",
+        help="乐观锁：仅当当前活动 manifest 与此值一致时发布",
+    ),
 ) -> None:
     """按页生成逻辑块，计算双级 Hash，并原子发布增量 manifest。"""
     settings = get_settings()
@@ -568,14 +574,22 @@ def sync_pdf_manifest(
     if not chunks:
         console.print("[yellow]PDF 没有可索引文本；疑似扫描件需先 OCR[/yellow]")
         raise typer.Exit(code=2)
-    with IndexManifestStore(db or settings.db_path) as store:
-        result = store.sync_document(
-            doc_id=doc_id or pdf.name,
-            source_path=pdf,
-            document_bytes=pdf.read_bytes(),
-            chunks=chunks,
-            embedding_model=embedding_model,
-        )
+    try:
+        with IndexManifestStore(db or settings.db_path) as store:
+            kwargs: dict[str, Any] = {}
+            if expected_manifest is not None:
+                kwargs["expected_current_manifest"] = expected_manifest
+            result = store.sync_document(
+                doc_id=doc_id or pdf.name,
+                source_path=pdf,
+                document_bytes=pdf.read_bytes(),
+                chunks=chunks,
+                embedding_model=embedding_model,
+                **kwargs,
+            )
+    except ScoreProofError as exc:
+        console.print_json(json.dumps(exc.to_dict(), ensure_ascii=False))
+        raise typer.Exit(code=2) from exc
     payload = result.model_dump(mode="json")
     payload["rebuild_keys"] = result.diff.rebuild_keys
     console.print_json(json.dumps(payload, ensure_ascii=False))
@@ -593,6 +607,11 @@ def sync_pdf_hybrid(
     model_cache: Path | None = typer.Option(None, "--model-cache"),
     db: Path | None = typer.Option(None, "--db", help="检索 Manifest SQLite"),
     vector_dir: Path | None = typer.Option(None, "--vector-dir", help="Chroma 持久化目录"),
+    expected_manifest: str | None = typer.Option(
+        None,
+        "--expected-manifest",
+        help="乐观锁：仅当当前活动 manifest 与此值一致时发布",
+    ),
 ) -> None:
     """把 PDF 作为同一 Manifest 批次发布到 BM25 与 Chroma。"""
     settings = get_settings()
@@ -616,23 +635,33 @@ def sync_pdf_hybrid(
         model_name=embedding_model,
         cache_dir=model_cache or settings.model_cache_dir,
     )
-    with HybridIndexManifestStore(
-        db or settings.index_db_path,
-        vector_dir=vector_dir or settings.vector_dir,
-        embeddings=embeddings,
-        embedding_model=model_version,
-    ) as store:
-        result = store.sync_document(
-            doc_id=doc_id or pdf.name,
-            source_path=pdf,
-            document_bytes=pdf.read_bytes(),
-            chunks=chunks,
+    try:
+        with HybridIndexManifestStore(
+            db or settings.index_db_path,
+            vector_dir=vector_dir or settings.vector_dir,
+            embeddings=embeddings,
             embedding_model=model_version,
-        )
-        batch = store.search_batch(result.manifest_id) if result.manifest_id else None
+        ) as store:
+            recovery = store.last_recovery
+            kwargs: dict[str, Any] = {}
+            if expected_manifest is not None:
+                kwargs["expected_current_manifest"] = expected_manifest
+            result = store.sync_document(
+                doc_id=doc_id or pdf.name,
+                source_path=pdf,
+                document_bytes=pdf.read_bytes(),
+                chunks=chunks,
+                embedding_model=model_version,
+                **kwargs,
+            )
+            batch = store.search_batch(result.manifest_id) if result.manifest_id else None
+    except ScoreProofError as exc:
+        console.print_json(json.dumps(exc.to_dict(), ensure_ascii=False))
+        raise typer.Exit(code=2) from exc
     payload = result.model_dump(mode="json")
     payload["rebuild_keys"] = result.diff.rebuild_keys
     payload["search_batch"] = batch.model_dump(mode="json") if batch else None
+    payload["recovery"] = recovery.model_dump(mode="json")
     console.print_json(json.dumps(payload, ensure_ascii=False, default=str))
 
 
@@ -839,11 +868,21 @@ def rollback_index_manifest(
     doc_id: str = typer.Argument(..., help="稳定文档 ID"),
     manifest_id: str | None = typer.Option(None, "--manifest-id", help="默认回滚到上一版本"),
     db: Path | None = typer.Option(None, "--db"),
+    expected_manifest: str | None = typer.Option(
+        None, "--expected-manifest", help="乐观锁：操作前预期的活动 manifest"
+    ),
 ) -> None:
     """把活动索引原子切回指定或上一份完整 manifest。"""
     settings = get_settings()
-    with IndexManifestStore(db or settings.db_path) as store:
-        result = store.rollback(doc_id, manifest_id=manifest_id)
+    try:
+        with IndexManifestStore(db or settings.db_path) as store:
+            kwargs: dict[str, Any] = {}
+            if expected_manifest is not None:
+                kwargs["expected_current_manifest"] = expected_manifest
+            result = store.rollback(doc_id, manifest_id=manifest_id, **kwargs)
+    except ScoreProofError as exc:
+        console.print_json(json.dumps(exc.to_dict(), ensure_ascii=False))
+        raise typer.Exit(code=2) from exc
     console.print_json(result.model_dump_json())
 
 
@@ -851,11 +890,21 @@ def rollback_index_manifest(
 def delete_index_document(
     doc_id: str = typer.Argument(..., help="稳定文档 ID"),
     db: Path | None = typer.Option(None, "--db"),
+    expected_manifest: str | None = typer.Option(
+        None, "--expected-manifest", help="乐观锁：操作前预期的活动 manifest"
+    ),
 ) -> None:
     """从活动索引删除文档，同时保留可审计历史快照。"""
     settings = get_settings()
-    with IndexManifestStore(db or settings.db_path) as store:
-        result = store.delete_document(doc_id)
+    try:
+        with IndexManifestStore(db or settings.db_path) as store:
+            kwargs: dict[str, Any] = {}
+            if expected_manifest is not None:
+                kwargs["expected_current_manifest"] = expected_manifest
+            result = store.delete_document(doc_id, **kwargs)
+    except ScoreProofError as exc:
+        console.print_json(json.dumps(exc.to_dict(), ensure_ascii=False))
+        raise typer.Exit(code=2) from exc
     console.print_json(result.model_dump_json())
 
 
@@ -939,8 +988,12 @@ def extract_certificate_command(
     processed_dir: Path | None = typer.Option(None, "--processed-dir", help="预处理图片输出目录"),
     confidence_threshold: float = typer.Option(0.8, "--confidence-threshold", min=0.0, max=1.0),
     vlm_provider: str | None = typer.Option(
-        None, "--vlm-provider", help="仅覆盖触发判断：qwen-vl-plus 或 glm-4v"
+        None, "--vlm-provider", help="覆盖视觉模型：qwen-vl-plus 或 glm-4v"
     ),
+    call_vlm: bool = typer.Option(
+        False, "--call-vlm/--no-call-vlm", help="显式允许向已配置视觉模型发送必要裁剪图"
+    ),
+    vlm_crops_dir: Path | None = typer.Option(None, "--vlm-crops-dir"),
     out: Path | None = typer.Option(None, "--out", help="导出完整 JSON（含 Evidence）"),
     cost_db: Path | None = typer.Option(None, "--cost-db", help="模型 token/成本账本 SQLite"),
     review_db: Path | None = typer.Option(
@@ -956,6 +1009,8 @@ def extract_certificate_command(
             processed_dir=processed_dir,
             confidence_threshold=confidence_threshold,
             provider=vlm_provider,
+            call_vlm=call_vlm,
+            vlm_crops_dir=vlm_crops_dir,
             cost_ledger=ledger,
             batch_id=f"certificate:{_file_sha256(image)[:16]}",
         )
@@ -973,6 +1028,76 @@ def extract_certificate_command(
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(encoded, encoding="utf-8")
         console.print(f"已写出：{out}")
+
+
+@app.command("eval-vlm-integration")
+def eval_vlm_integration_command(
+    image: Path = typer.Argument(..., exists=True, dir_okay=False, help="测试图片"),
+    field: str = typer.Option(..., "--field", help="裁剪图对应的单个目标字段"),
+    bbox: str = typer.Option(..., "--bbox", help="像素坐标 left,top,right,bottom"),
+    expected: str | None = typer.Option(None, "--expected", help="可选预期逐字文本"),
+    provider: str = typer.Option("qwen-vl-plus", "--provider"),
+    dataset_kind: Literal["synthetic", "public", "authorized_real"] = typer.Option(
+        "synthetic", "--dataset-kind"
+    ),
+    crops_dir: Path = typer.Option(..., "--crops-dir"),
+    cost_db: Path = typer.Option(..., "--cost-db"),
+    out: Path = typer.Option(..., "--out"),
+) -> None:
+    """用真实外部 VLM 验证必要裁剪、严格字段集合与成本审计。"""
+    try:
+        coordinates = tuple(float(part.strip()) for part in bbox.split(","))
+    except ValueError as exc:
+        raise typer.BadParameter("bbox 必须是四个逗号分隔的数字") from exc
+    if len(coordinates) != 4:
+        raise typer.BadParameter("bbox 必须包含 left,top,right,bottom")
+    region = VlmRegion(field=field, bbox=cast(tuple[float, float, float, float], coordinates), reason="integration-test")
+    with CostLedger(cost_db) as ledger:
+        before = len(ledger.list_events())
+        try:
+            response = extract_with_vlm(
+                image,
+                fields=[field],
+                regions=[region],
+                provider=provider,
+                out_dir=crops_dir,
+                cost_ledger=ledger,
+                batch_id=f"vlm-integration:{_file_sha256(image)[:16]}",
+            )
+        except ScoreProofError as exc:
+            console.print_json(json.dumps(exc.to_dict(), ensure_ascii=False))
+            raise typer.Exit(code=2) from exc
+        events = ledger.list_events()[before:]
+    crop_paths = sorted(crops_dir.glob(f"{image.stem}-crop-*.png"))
+    success_event = next(
+        (
+            item
+            for item in reversed(events)
+            if item.purpose == "certificate_vlm_crop" and item.status == "ok"
+        ),
+        None,
+    )
+    report = build_vlm_integration_report(
+        provider=provider,
+        model=provider,
+        source=image,
+        crop_paths=crop_paths,
+        requested_fields=[field],
+        response=response,
+        dataset_kind=dataset_kind,
+        expected={field: expected} if expected is not None else None,
+        cost_event_recorded=success_event is not None,
+        input_tokens=success_event.input_tokens if success_event else None,
+        output_tokens=success_event.output_tokens if success_event else None,
+        total_tokens=success_event.total_tokens if success_event else None,
+    )
+    encoded = report.model_dump_json(indent=2)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(encoded, encoding="utf-8")
+    console.print_json(encoded)
+    console.print(f"已写出：{out}")
+    if report.result != "passed":
+        raise typer.Exit(code=2)
 
 
 @app.command("eval-certificate-fields")

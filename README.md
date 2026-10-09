@@ -119,7 +119,7 @@ scoreproof/
 │   ├── api/                  # FastAPI + SSE
 │   └── cli.py                # typer 命令行
 ├── reports/                  # 可复跑评测报告（样本量、版本、置信区间）
-├── tests/                    # 469 项自动化测试（合成/公开数据，无隐私）
+├── tests/                    # 478 项自动化测试（合成/公开数据，无隐私）
 └── web/                      # 前端占位（V3.0：P2 延后）
 ```
 
@@ -164,14 +164,15 @@ scoreproof/
 | `scoreproof parse-pdf 细则.pdf --tables --out parsed.json` | 保留原文/bbox，保守重排双栏，按页边缘/表头/续表标记拼接跨页表，并显式标记扫描或歧义页 |
 | `scoreproof eval-complex-pdf dataset.json --base-dir data/eval/complex-pdf --out reports/complex-pdf-regression-v1.json` | 评测多栏、跨页表和扫描页；正式门禁要求 30 份去重真实授权文档、每类 n≥10、总体及各类成功率≥95% |
 | `scoreproof sync-pdf-manifest 细则.pdf --doc-id school-rules` | 计算文档/页块 Hash，原子发布增量 manifest |
-| `scoreproof sync-pdf-hybrid 细则.pdf --doc-id school-rules --chunk-mode block --embedding-backend fastembed --embedding-model BAAI/bge-small-zh-v1.5` | 用预训练 BGE 建立 BM25/Chroma 同批 manifest；表格行保留级别上下文 |
+| `scoreproof sync-pdf-hybrid 细则.pdf --doc-id school-rules --chunk-mode block --embedding-backend fastembed --embedding-model BAAI/bge-small-zh-v1.5` | 用预训练 BGE 建立 BM25/Chroma 同批 manifest；支持 `--expected-manifest` 乐观锁，并在启动时清理进程崩溃留下的无主向量集合 |
 | `scoreproof search-index "第一专利人如何加分" --embedding-backend fastembed --embedding-model BAAI/bge-small-zh-v1.5 --rerank` | 查询改写后混合召回，并用 BGE Reranker 精排；输出各通道名次与分数 |
 | `scoreproof eval-retrieval tests/fixtures/retrieval_test_v2.json --out reports/retrieval-ablation-v1.json` | 复跑 A=BM25、B=+BGE/RRF、C=+Rerank 的 100 条冻结集评测 |
 | `scoreproof eval-citation-refusal tests/fixtures/retrieval_test_v2.json tests/fixtures/refusal_cases_v1.json --out reports/citation-refusal-v1.json` | 成对复跑引用定位、应拒答与误拒答指标 |
-| `scoreproof rollback-index-manifest school-rules` | 将活动索引回滚到上一份完整 manifest |
-| `scoreproof delete-index-document school-rules` | 从活动索引删除文档并保留历史快照 |
+| `scoreproof rollback-index-manifest school-rules --expected-manifest <current_im>` | 用乐观锁将活动索引回滚到上一份完整 manifest |
+| `scoreproof delete-index-document school-rules --expected-manifest <current_im>` | 用乐观锁从活动索引删除文档并保留历史快照 |
 | `scoreproof parse-image 奖状.png --ocr` | 检查图片质量、计算 pHash 并运行 RapidOCR |
-| `scoreproof extract-certificate 奖状.png --out result.json` | RapidOCR + DeepSeek 文本结构化；输出逐字段原值/规范值/证据/bbox/置信度、VLM 原因和人工复核状态 |
+| `scoreproof extract-certificate 奖状.png --vlm-provider qwen-vl-plus --call-vlm --out result.json` | RapidOCR + DeepSeek 文本结构化；显式授权后仅把低置信字段 bbox 裁剪发送给 VLM，建议仍须人工确认且不会覆盖 Evidence |
+| `scoreproof eval-vlm-integration 奖状.png --field 奖项/名次 --bbox l,t,r,b --crops-dir <dir> --cost-db <db> --out reports/vlm-integration-v1.json` | 用真实外部服务验证必要裁剪、严格字段集合、预期文本和 token 审计；报告不保存识别原文 |
 | `scoreproof eval-certificate-fields labels.jsonl --predictions predictions.jsonl --out report.json` | 输出规范值/原始值字段 F1、整证正确率、VLM 触发/调用率与样本量；合成或 n<30 自动标记为仅烟雾测试 |
 | `scoreproof compare-evidence 左图.png 右图.jpg --out decision.json` | 用文件 SHA-256、pHash 汉明距离和结构化事实联合查重；只拦截/送审，不自动删除 |
 | `scoreproof check-evidence-consistency claim.json evidence.json --policy policy.json` | 逐字段核对姓名、赛事别名、等级奖项、学年、团队、单位/目录和类别；信息不足进入人工复核 |
@@ -286,8 +287,8 @@ uv run scoreproof backtest data/eval/backtest-2025-2026/claims.xlsx \
 | 阶段 3 | 五道抽取验证 + 独立发布冲突门禁 | ✅ 代码链路与 100 条分层冻结负例完成 |
 | 阶段 4 | 增量索引、混合检索、LangChain 工具编排 | ✅ 4.1～4.5 已完成：索引、混合检索、五工具状态机、代码级引用门禁与成对拒答评测均通过真实 CLI/API 验收 |
 | 阶段 5 | 确定性计算与 52 人回测 | 🟡 逐人/逐项回测、双口径、完整差异与 52 人门禁已落地；5 人合成文件真实 CLI 通过，52 人脱敏历史数据待提供 |
-| 阶段 6 | OCR + LLM/VLM + 查重 + 人工复核 | 🟡 **6.1～6.4 工具链已落地但阶段未完成**：真实 RapidOCR + DeepSeek、联合查重/一致性及复核 SQLite/CLI/Uvicorn 主链路已跑通；VLM 未调用，n≥30 真实脱敏字段集与 n≥50 对独立真实查重集仍缺 |
-| 阶段 7 | 消融、全量评测与结项 | 🟡 **候选门禁、规则抽取评测、成本可观测、用户试用评测、一键演示、规则版本发布加固及持久化批量核算/导出已落地，阶段未完成**：合成演示及抽取烟雾链路不替代业务验收；尚无 n≥50 规则金标、已授权真实用户记录，其他正式数据、VLM、52 人回测及完整货币成本仍阻塞 |
+| 阶段 6 | OCR + LLM/VLM + 查重 + 人工复核 | 🟡 **6.1～6.4 工具链已落地但阶段未完成**：真实 RapidOCR + DeepSeek、真实 qwen-vl-plus 必要裁剪、联合查重/一致性及复核 SQLite/CLI/Uvicorn 链路已分别跑通；VLM 仅为 n=1 合成裁剪集成烟雾，n≥30 真实脱敏字段集与 n≥50 对独立真实查重集仍缺 |
+| 阶段 7 | 消融、全量评测与结项 | 🟡 **候选门禁、规则抽取评测、成本可观测、用户试用评测、一键演示、真实 VLM 集成、规则/索引跨进程发布加固及持久化批量核算/导出已落地，阶段未完成**：工程烟雾链路不替代业务验收；尚无 n≥50 规则金标、已授权真实用户记录及其他正式数据，52 人回测和完整货币成本仍阻塞 |
 
 ## 测试
 
@@ -299,6 +300,8 @@ uv run scoreproof backtest data/eval/backtest-2025-2026/claims.xlsx \
 
 奖状字段烟雾报告见 `reports/certificate-fields-smoke-v1.json`：5 张合成图片均实际经过 RapidOCR 与 DeepSeek 文本 API；规范值 micro-F1 为 0.8788，整证完全正确 1/5，VLM 决策触发 4/5、实际调用 0/5。失败主要来自两张赛事名漏掉级别前缀，以及 4 张证书没有“个人”原文、系统按“不猜测”原则将团队属性置空。**该结果仅验证代码、CLI/API 与外部文本服务主链路，不是正式业务评测，不能用于简历；原始值标签尚未提供，raw F1 为 null。**
 
+VLM 集成报告见 `reports/vlm-integration-v1.json`：真实已安装 CLI 仅发送合成奖状中“奖项/名次”的 666×103 像素裁剪，`qwen-vl-plus` 返回值通过严格字段集合与预期文本校验，输入 147、输出 14、合计 161 token；整图未发送，报告只保存响应 Hash，不保存识别原文。获得明确授权后又完成完整 `extract-certificate --call-vlm` 外部联调，真实 RapidOCR、DeepSeek 文本抽取、6 个必要裁剪的 qwen-vl-plus 调用、7 条 SQLite 人工复核任务及独立 CLI 跨进程回读均通过；VLM 建议未覆盖 Evidence，文本/VLM 调用分别记录 1,602/450 token，见 `reports/vlm-pipeline-smoke-v1.json`。这些结果只解除真实视觉服务与完整工程主链路门禁，不替代 n≥30 字段 F1、VLM 触发率或真实业务图片验收。
+
 规则抽取烟雾报告见 `reports/rule-extraction-smoke-v1.json`：真实 CLI 调用已配置的 DeepSeek
 文本模型，1 条合成清晰规则经过严格 Schema 与五道网关后完整匹配，11 个字段准确率为 1.0；
 该集合只有 n=1，且不是独立真实授权金标，Wilson 95% 区间下界很低，报告固定为
@@ -306,7 +309,7 @@ uv run scoreproof backtest data/eval/backtest-2025-2026/claims.xlsx \
 
 查重烟雾报告见 `reports/evidence-dedup-smoke-v1.json`：真实 CLI 读取合成奖状文件及其完全相同、JPEG 压缩、亮度变化、裁剪缩放变体，n=5（重复正例 4、不同奖状负例 1）的烟雾结果为 TP=4、FP=0、TN=1、FN=0；Recall/Precision 点估计虽均为 1.0，但各自 Wilson 95% CI 下界仅 0.5101。**该集合规模小、类别不充分且图片为合成，不具备 n≥50 对正式验收资格，数字不得写入简历。**
 
-阶段 7 就绪审计见 `reports/quality-gates-v1.json` 与 `reports/release-readiness-v1.json`：其中冻结的旧报告记录 463 项测试及当时的 Git 状态，需在下一次候选提交后重跑，当前不得解释为新候选已冻结。复杂 PDF 与规则抽取当前均只算烟雾，且 n≥30 字段集、真实 VLM、n≥50 查重对、52 人回测和真实用户试用继续阻塞。**这只是阶段 7 工具链与真实入口验证，不代表 RC 或项目结项。**
+阶段 7 就绪审计见 `reports/quality-gates-v1.json` 与 `reports/release-readiness-v1.json`：当前质量命令通过但工作树未提交，候选仍未冻结。真实 VLM 必要裁剪工程门禁已通过；复杂 PDF 与规则抽取仍只算烟雾，且 n≥30 字段集、n≥50 查重对、52 人回测和真实用户试用继续阻塞。**这只是阶段 7 工具链与真实入口验证，不代表 RC 或项目结项。**
 
 一键演示报告见 `reports/demo-smoke-v1.json`：`scoreproof demo` 在全新隔离目录中启动 5 个真实 CLI 子进程，生成并读取 Excel/CSV、写入 SQLite，完成规则导入、5 人 13 项确定性核算、逐项回测及解释查询；9 个输入/输出产物均记录 SHA-256。输出目录非空时命令会拒绝覆盖，报告 Schema 不保存子进程业务输出。该数据全部由脚本合成，报告固定为 `smoke_test_only=true`、`formal_gate_eligible=false`，不能解除 52 人回测或任何真实数据门禁。
 
@@ -314,9 +317,11 @@ uv run scoreproof backtest data/eval/backtest-2025-2026/claims.xlsx \
 
 批任务烟雾报告见 `reports/batch-api-smoke-v1.json`：合成 `.xlsx` 经真实 CLI 写入 13 条规则后，真实 Uvicorn HTTP 对 2 名合成学生创建持久化批次，返回 `201`；同一 `Idempotency-Key` 重放返回 `200` 和同一批次。任务锁定规则版本/内容 Hash，SQLite 跨进程重开后仍保留成功状态、结果 Hash 与 3 条状态事件；真实 JSON/CSV 文件均下载并解析，CSV 的 2 行均含规则版本和原文出处，公式前缀防护通过。该链路为同步任务工程烟雾测试，不包含后台分布式队列，也不替代真实业务数据或用户验收。
 
+索引跨进程烟雾报告见 `reports/index-cross-process-smoke-v1.json`：两个真实 CLI 进程并发同步同一份 6 页公开 PDF，最终分别返回 `published` 与 `unchanged`，共同指向唯一 manifest，活动 BM25/Chroma 均为 6 个完整块。故障注入进程在 Chroma 写完、SQLite 提交前以退出码 92 强制终止后，SQLite 未暴露半成品；下一次真实 CLI 自动删除 1 个无主集合并完整恢复。过期 `--expected-manifest` 被非零退出拒绝。该结果验证单机进程级原子性，不代表多主机分布式一致性，也不解除复杂 PDF 样本量门禁。
+
 成本可观测报告见 `reports/cost-summary-v1.json`：统一账本只保存模型、用途、token、材料/批次标识、缓存状态和时间，不保存提示词、回复、密钥或原始学号；只有配置独立 `SCOREPROOF_COST_ID_SALT` 时才以 HMAC 记录稳定用户摘要。当前累计 15 次外部调用，其中 1 次受限网络失败；14 次成功调用中 2 次返回 usage，合计输入 1,388、输出 416、总计 1,804 token，覆盖率仅 14.29%，因此不能把该 token 合计解释为全部调用成本。当前没有配置经账单确认的人民币单价，也没有真实学生批次，每 100 份材料和每名学生成本仍为 `null`，成本门禁保持警告。只读 API 为 `GET /api/costs/summary`。
 
-真正启用视觉模型前必须在 `.env` 二选一配置：`SCOREPROOF_VLM_PROVIDER=qwen-vl-plus` + `DASHSCOPE_API_KEY`，或 `SCOREPROOF_VLM_PROVIDER=glm-4v` + `ZHIPUAI_API_KEY`。当前 DeepSeek 是文本模型，不会被当作 VLM；未配置时低置信字段只进入人工复核。
+真正启用视觉模型前必须配置 `SCOREPROOF_VLM_PROVIDER=qwen-vl-plus` + `DASHSCOPE_API_KEY`，并在 CLI 显式传入 `--call-vlm`；当前自动真实客户端只实现 qwen，`glm-4v` 仍保留受控注入接口但不会伪装成成功调用。DeepSeek 是文本模型，不会被当作 VLM；未配置、未显式授权、缺少裁剪或调用失败时，低置信字段只进入人工复核。
 
 ```bash
 uv run pytest              # 全部单元测试

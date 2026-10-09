@@ -144,6 +144,20 @@ class ReviewSource(BaseModel):
     locator: StrictStr | None = Field(default=None, max_length=200)
     bbox: tuple[float, float, float, float] | None = None
 
+    @field_validator("bbox", mode="before")
+    @classmethod
+    def _restore_json_bbox(
+        cls, value: object
+    ) -> tuple[float, float, float, float] | object:
+        """Restore the tuple shape lost when a review source is persisted as JSON."""
+        if (
+            isinstance(value, list)
+            and len(value) == 4
+            and all(isinstance(item, (int, float)) and not isinstance(item, bool) for item in value)
+        ):
+            return (float(value[0]), float(value[1]), float(value[2]), float(value[3]))
+        return value
+
     @field_validator("locator")
     @classmethod
     def _safe_locator(cls, value: str | None) -> str | None:

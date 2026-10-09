@@ -1,8 +1,8 @@
 {
   "schema_version": "1.0",
-  "generated_at": "2026-10-08T02:18:19.728069+00:00",
-  "candidate_version": "e211dbf2a6c1375da8b27d82328c52fe028f5963",
-  "manifest_hash": "9a6eddda4eaf130138d6a8fd4da1467d5efd9931a4d2503b5185b385cc0e79d6",
+  "generated_at": "2026-10-08T08:58:29.229459+00:00",
+  "candidate_version": "5843ec26b23e32ed1b7a4dd338b2878ba38775be",
+  "manifest_hash": "34896693b07e71cbcb71f6ff79c08c2e2f78623f5a0a35ab41ff492e8cda8e1c",
   "status": "阻塞",
   "ready": false,
   "report_dir": "reports",
@@ -11,7 +11,7 @@
       "name": "quality",
       "path": "quality-gates-v1.json",
       "exists": true,
-      "sha256": "7cd3423160b3dfbed022acae544057c1c9e6af0a917d4e4c30ace03924fb67ec",
+      "sha256": "be247ddf9973e34f2584ac3168d5b8d870b579fd5215187f35c8e826a95be2aa",
       "valid_json": true,
       "error": null
     },
@@ -90,9 +90,9 @@
     {
       "name": "vlm",
       "path": "vlm-integration-v1.json",
-      "exists": false,
-      "sha256": null,
-      "valid_json": null,
+      "exists": true,
+      "sha256": "01f04f607e0096b4c26b1835aa843161cfea4a3421f6688022dc227fcc8b83a7",
+      "valid_json": true,
       "error": null
     },
     {
@@ -159,9 +159,9 @@
       "required": true,
       "status": "阻塞",
       "artifact": "quality-gates-v1.json",
-      "sample_size": 463,
+      "sample_size": 478,
       "metrics": {
-        "git_head": "e211dbf2a6c1375da8b27d82328c52fe028f5963",
+        "git_head": "5843ec26b23e32ed1b7a4dd338b2878ba38775be",
         "candidate_version_matches": true,
         "all_checks_passed": true
       },
@@ -310,12 +310,23 @@
       "id": "vlm_integration",
       "title": "真实视觉模型局部兜底",
       "required": true,
-      "status": "缺失",
+      "status": "通过",
       "artifact": "vlm-integration-v1.json",
-      "sample_size": null,
-      "metrics": {},
+      "sample_size": 1,
+      "metrics": {
+        "provider": "qwen-vl-plus",
+        "real_external_service": true,
+        "whole_image_sent": false,
+        "strict_schema_passed": true,
+        "cost_event_recorded": true,
+        "input_tokens": 147,
+        "output_tokens": 14,
+        "total_tokens": 161,
+        "dataset_kind": "synthetic",
+        "smoke_test_only": true
+      },
       "reasons": [
-        "缺少正式产物 vlm-integration-v1.json"
+        "真实外部 VLM 必要裁剪调用通过；仅验证工程集成，不替代字段正式评测"
       ]
     },
     {
@@ -406,7 +417,7 @@
       "metrics": {
         "embedding_queries": 350,
         "rerank_pairs": 2000,
-        "vlm_calls": 0,
+        "vlm_calls": 1,
         "external_text_calls": 15,
         "input_tokens": 1388,
         "output_tokens": 416,
@@ -434,7 +445,6 @@
     "complex_pdf",
     "rule_extraction",
     "certificate_fields",
-    "vlm_integration",
     "evidence_dedup",
     "backtest_52",
     "user_trial"
@@ -445,7 +455,7 @@
   "cost_summary": {
     "embedding_queries": 350,
     "rerank_pairs": 2000,
-    "vlm_calls": 0,
+    "vlm_calls": 1,
     "external_text_calls": 15,
     "input_tokens": 1388,
     "output_tokens": 416,

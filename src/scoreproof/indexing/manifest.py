@@ -11,19 +11,21 @@ import hashlib
 import json
 import sqlite3
 import uuid
-from collections.abc import Sequence
-from contextlib import closing
+from collections.abc import Iterator, Sequence
+from contextlib import closing, contextmanager
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from ..errors import VersionConflict
 from ..rules.gateway import chunk_hash
 from ..schema import SourceRef
 
 ChunkKind = Literal["page", "section", "table", "paragraph", "other"]
 ManifestStatus = Literal["staged", "published", "superseded", "rolled_back"]
+_EXPECTED_MANIFEST_UNSET = object()
 
 MANIFEST_SCHEMA_SQL = """
 PRAGMA foreign_keys = ON;
@@ -147,10 +149,19 @@ class IndexManifestStore:
     def __init__(self, path: str | Path) -> None:
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self._conn = sqlite3.connect(self.path)
+        self._conn = sqlite3.connect(self.path, timeout=30, isolation_level=None)
         self._conn.row_factory = sqlite3.Row
-        with self._conn:
-            self._conn.executescript(MANIFEST_SCHEMA_SQL)
+        self._conn.execute("PRAGMA foreign_keys=ON")
+        self._conn.execute("PRAGMA busy_timeout=30000")
+        try:
+            self._conn.execute("PRAGMA journal_mode=WAL")
+        except sqlite3.OperationalError as exc:
+            # 新库首次并发启动时，另一个进程可能正持有 WAL 模式切换所需的独占锁。
+            # 该进程会完成切换；当前连接继续依赖 BEGIN IMMEDIATE + busy_timeout。
+            if "locked" not in str(exc).lower():
+                raise
+        self._conn.execute("PRAGMA synchronous=FULL")
+        self._conn.executescript(MANIFEST_SCHEMA_SQL)
 
     def close(self) -> None:
         self._conn.close()
@@ -161,6 +172,18 @@ class IndexManifestStore:
     def __exit__(self, *exc: object) -> None:
         self.close()
 
+    @contextmanager
+    def _transaction(self) -> Iterator[None]:
+        """跨进程写入串行化；异常或进程退出时由 SQLite 回滚未提交事务。"""
+        self._conn.execute("BEGIN IMMEDIATE")
+        try:
+            yield
+        except Exception:
+            self._conn.rollback()
+            raise
+        else:
+            self._conn.commit()
+
     def sync_document(
         self,
         *,
@@ -170,6 +193,7 @@ class IndexManifestStore:
         chunks: Sequence[DocumentChunk],
         embedding_model: str,
         force_publish: bool = False,
+        expected_current_manifest: str | None | object = _EXPECTED_MANIFEST_UNSET,
     ) -> SyncResult:
         """建立完整快照并原子发布，返回需要重建索引的逻辑块。"""
         doc_id = doc_id.strip()
@@ -180,34 +204,51 @@ class IndexManifestStore:
             raise ValueError("文档至少需要一个非空逻辑块")
         prepared = self._prepare_chunks(doc_id, chunks, embedding_model)
         digest = document_hash(document_bytes)
-        current = self._current_document(doc_id)
-        previous_id = current["current_manifest_id"] if current and not current["deleted"] else None
-        previous = self._chunks_for_manifest(previous_id) if previous_id else []
-        previous_model = self._manifest_model(previous_id) if previous_id else None
-        diff = self._diff(previous, prepared, model_changed=previous_model != embedding_model)
-
-        if (
-            not force_publish
-            and current is not None
-            and not current["deleted"]
-            and current["document_hash"] == digest
-            and not diff.added_keys
-            and not diff.changed_keys
-            and not diff.metadata_only_keys
-            and not diff.removed_keys
-        ):
-            return SyncResult(
-                action="unchanged",
-                doc_id=doc_id,
-                manifest_id=previous_id,
-                document_hash=digest,
-                embedding_model=embedding_model,
-                diff=diff,
+        with self._transaction():
+            current = self._current_document(doc_id)
+            previous_id = (
+                str(current["current_manifest_id"])
+                if current and not current["deleted"] and current["current_manifest_id"]
+                else None
             )
+            if (
+                expected_current_manifest is not _EXPECTED_MANIFEST_UNSET
+                and previous_id != expected_current_manifest
+            ):
+                raise VersionConflict(
+                    "活动索引 manifest 已变化",
+                    detail={
+                        "doc_id": doc_id,
+                        "expected_current_manifest": expected_current_manifest,
+                        "current_manifest": previous_id,
+                    },
+                )
+            previous = self._chunks_for_manifest(previous_id) if previous_id else []
+            previous_model = self._manifest_model(previous_id) if previous_id else None
+            diff = self._diff(previous, prepared, model_changed=previous_model != embedding_model)
+            effective_force = force_publish or self._requires_force_publish(previous_id)
 
-        manifest_id = f"im_{uuid.uuid4().hex[:16]}"
-        now = datetime.now().isoformat()
-        with self._conn:
+            if (
+                not effective_force
+                and current is not None
+                and not current["deleted"]
+                and current["document_hash"] == digest
+                and not diff.added_keys
+                and not diff.changed_keys
+                and not diff.metadata_only_keys
+                and not diff.removed_keys
+            ):
+                return SyncResult(
+                    action="unchanged",
+                    doc_id=doc_id,
+                    manifest_id=previous_id,
+                    document_hash=digest,
+                    embedding_model=embedding_model,
+                    diff=diff,
+                )
+
+            manifest_id = f"im_{uuid.uuid4().hex[:16]}"
+            now = datetime.now().isoformat()
             exists = self._conn.execute(
                 "SELECT 1 FROM documents WHERE doc_id=?", (doc_id,)
             ).fetchone()
@@ -281,26 +322,44 @@ class IndexManifestStore:
             diff=diff,
         )
 
-    def rollback(self, doc_id: str, *, manifest_id: str | None = None) -> SyncResult:
+    def rollback(
+        self,
+        doc_id: str,
+        *,
+        manifest_id: str | None = None,
+        expected_current_manifest: str | None | object = _EXPECTED_MANIFEST_UNSET,
+    ) -> SyncResult:
         """把当前指针原子切回同文档的历史完整快照。"""
-        current = self._current_document(doc_id)
-        if current is None or current["deleted"] or not current["current_manifest_id"]:
-            raise ValueError(f"文档没有可回滚的当前 manifest：{doc_id}")
-        current_id = str(current["current_manifest_id"])
-        if manifest_id is None:
-            row = self._conn.execute(
-                "SELECT previous_manifest_id FROM index_manifests WHERE id=?", (current_id,)
+        with self._transaction():
+            current = self._current_document(doc_id)
+            if current is None or current["deleted"] or not current["current_manifest_id"]:
+                raise ValueError(f"文档没有可回滚的当前 manifest：{doc_id}")
+            current_id = str(current["current_manifest_id"])
+            if (
+                expected_current_manifest is not _EXPECTED_MANIFEST_UNSET
+                and current_id != expected_current_manifest
+            ):
+                raise VersionConflict(
+                    "活动索引 manifest 已变化",
+                    detail={
+                        "doc_id": doc_id,
+                        "expected_current_manifest": expected_current_manifest,
+                        "current_manifest": current_id,
+                    },
+                )
+            if manifest_id is None:
+                row = self._conn.execute(
+                    "SELECT previous_manifest_id FROM index_manifests WHERE id=?", (current_id,)
+                ).fetchone()
+                manifest_id = str(row["previous_manifest_id"]) if row and row["previous_manifest_id"] else None
+            if not manifest_id:
+                raise ValueError(f"文档没有更早的 manifest：{doc_id}")
+            target = self._conn.execute(
+                "SELECT * FROM index_manifests WHERE id=? AND doc_id=?", (manifest_id, doc_id)
             ).fetchone()
-            manifest_id = row["previous_manifest_id"] if row else None
-        if not manifest_id:
-            raise ValueError(f"文档没有更早的 manifest：{doc_id}")
-        target = self._conn.execute(
-            "SELECT * FROM index_manifests WHERE id=? AND doc_id=?", (manifest_id, doc_id)
-        ).fetchone()
-        if target is None:
-            raise ValueError("目标 manifest 不存在或不属于该文档")
-        now = datetime.now().isoformat()
-        with self._conn:
+            if target is None:
+                raise ValueError("目标 manifest 不存在或不属于该文档")
+            now = datetime.now().isoformat()
             self._conn.execute(
                 "UPDATE index_manifests SET status='rolled_back' WHERE id=?", (current_id,)
             )
@@ -325,14 +384,33 @@ class IndexManifestStore:
             embedding_model=target["embedding_model"],
         )
 
-    def delete_document(self, doc_id: str) -> SyncResult:
+    def delete_document(
+        self,
+        doc_id: str,
+        *,
+        expected_current_manifest: str | None | object = _EXPECTED_MANIFEST_UNSET,
+    ) -> SyncResult:
         """逻辑删除文档；历史快照保留，但不会再出现在活动索引中。"""
-        current = self._current_document(doc_id)
-        if current is None or current["deleted"]:
-            raise ValueError(f"活动文档不存在：{doc_id}")
-        current_id = current["current_manifest_id"]
-        now = datetime.now().isoformat()
-        with self._conn:
+        with self._transaction():
+            current = self._current_document(doc_id)
+            if current is None or current["deleted"]:
+                raise ValueError(f"活动文档不存在：{doc_id}")
+            current_id = (
+                str(current["current_manifest_id"]) if current["current_manifest_id"] else None
+            )
+            if (
+                expected_current_manifest is not _EXPECTED_MANIFEST_UNSET
+                and current_id != expected_current_manifest
+            ):
+                raise VersionConflict(
+                    "活动索引 manifest 已变化",
+                    detail={
+                        "doc_id": doc_id,
+                        "expected_current_manifest": expected_current_manifest,
+                        "current_manifest": current_id,
+                    },
+                )
+            now = datetime.now().isoformat()
             if current_id:
                 self._conn.execute(
                     "UPDATE index_manifests SET status='superseded' WHERE id=?", (current_id,)
@@ -375,6 +453,10 @@ class IndexManifestStore:
 
     def _before_publish(self, manifest_id: str) -> None:
         """供后续索引构建适配器扩展；异常会回滚整个 SQLite 发布事务。"""
+
+    def _requires_force_publish(self, current_manifest_id: str | None) -> bool:
+        """子类可在持有写锁时检查活动快照的外部完整性。"""
+        return False
 
     def _current_document(self, doc_id: str) -> sqlite3.Row | None:
         return self._conn.execute(

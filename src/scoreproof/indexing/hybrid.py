@@ -16,7 +16,13 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from ..schema import SourceRef
 from ..tokenize import tokenize_for_search
-from .manifest import DocumentChunk, IndexManifestStore, StoredChunk, SyncResult
+from .manifest import (
+    _EXPECTED_MANIFEST_UNSET,
+    DocumentChunk,
+    IndexManifestStore,
+    StoredChunk,
+    SyncResult,
+)
 
 SEARCH_INDEX_SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS search_index_batches (
@@ -72,6 +78,18 @@ class SearchIndexBatch(BaseModel):
     embedded_count: int = Field(ge=0)
     status: str
     created_at: datetime
+
+
+class IndexRecoveryReport(BaseModel):
+    """启动时对 Chroma 无主集合的保守清理结果。"""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    known_collection_count: int = Field(ge=0)
+    scanned_collection_count: int = Field(ge=0)
+    orphaned_collections: list[str] = Field(default_factory=list)
+    removed_collections: list[str] = Field(default_factory=list)
+    errors: list[str] = Field(default_factory=list)
 
 
 class BM25IndexDocument(BaseModel):
@@ -207,8 +225,8 @@ class HybridIndexManifestStore(IndexManifestStore):
         if not self.embedding_model:
             raise ValueError("embedding_model 不能为空")
         self._staged_collection: str | None = None
-        with self._conn:
-            self._conn.executescript(SEARCH_INDEX_SCHEMA_SQL)
+        self._conn.executescript(SEARCH_INDEX_SCHEMA_SQL)
+        self.last_recovery = self.recover_orphaned_collections()
 
     def __enter__(self) -> HybridIndexManifestStore:
         return self
@@ -222,20 +240,12 @@ class HybridIndexManifestStore(IndexManifestStore):
         chunks: Sequence[DocumentChunk],
         embedding_model: str,
         force_publish: bool = False,
+        expected_current_manifest: str | None | object = _EXPECTED_MANIFEST_UNSET,
     ) -> SyncResult:
         if embedding_model != self.embedding_model:
             raise ValueError(
                 f"同步模型 {embedding_model!r} 与索引器模型 {self.embedding_model!r} 不一致"
             )
-        current = self._current_document(doc_id.strip())
-        current_manifest_id = (
-            str(current["current_manifest_id"])
-            if current is not None and not current["deleted"] and current["current_manifest_id"]
-            else None
-        )
-        force_publish = force_publish or bool(
-            current_manifest_id and not self._batch_is_complete(current_manifest_id)
-        )
         self._staged_collection = None
         try:
             result = super().sync_document(
@@ -245,12 +255,62 @@ class HybridIndexManifestStore(IndexManifestStore):
                 chunks=chunks,
                 embedding_model=embedding_model,
                 force_publish=force_publish,
+                expected_current_manifest=expected_current_manifest,
             )
         except Exception:
             self._drop_staged_collection()
             raise
         self._staged_collection = None
         return result
+
+    def _requires_force_publish(self, current_manifest_id: str | None) -> bool:
+        return bool(current_manifest_id and not self._batch_is_complete(current_manifest_id))
+
+    def recover_orphaned_collections(self) -> IndexRecoveryReport:
+        """在 SQLite 写锁内清理崩溃遗留、且没有任何批次引用的向量集合。"""
+        known: set[str] = set()
+        scanned: list[str] = []
+        orphaned: list[str] = []
+        removed: list[str] = []
+        errors: list[str] = []
+        with self._transaction():
+            known = {
+                str(row["chroma_collection"])
+                for row in self._conn.execute(
+                    "SELECT chroma_collection FROM search_index_batches"
+                ).fetchall()
+            }
+            try:
+                client = self._chroma_client()
+                scanned = sorted(
+                    str(getattr(collection, "name", collection))
+                    for collection in client.list_collections()
+                )
+            except Exception as exc:
+                errors.append(f"list_collections:{type(exc).__name__}")
+                return IndexRecoveryReport(
+                    known_collection_count=len(known),
+                    scanned_collection_count=0,
+                    errors=errors,
+                )
+            orphaned = [
+                name
+                for name in scanned
+                if name.startswith("scoreproof_im_") and name not in known
+            ]
+            for name in orphaned:
+                try:
+                    client.delete_collection(name)
+                    removed.append(name)
+                except Exception as exc:
+                    errors.append(f"delete_collection:{name}:{type(exc).__name__}")
+        return IndexRecoveryReport(
+            known_collection_count=len(known),
+            scanned_collection_count=len(scanned),
+            orphaned_collections=orphaned,
+            removed_collections=removed,
+            errors=errors,
+        )
 
     def _before_publish(self, manifest_id: str) -> None:
         manifest = self._conn.execute(
@@ -516,6 +576,7 @@ __all__ = [
     "FastEmbedEmbeddings",
     "HashingEmbeddings",
     "HybridIndexManifestStore",
+    "IndexRecoveryReport",
     "SEARCH_INDEX_SCHEMA_SQL",
     "SearchIndexBatch",
     "make_embedding_provider",

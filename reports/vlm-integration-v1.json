@@ -1,0 +1,33 @@
+{
+  "schema_version": "1.0",
+  "generated_at": "2026-10-08T07:50:07.204299Z",
+  "result": "passed",
+  "provider": "qwen-vl-plus",
+  "model": "qwen-vl-plus",
+  "sample_size": 1,
+  "real_external_service": true,
+  "dataset_kind": "synthetic",
+  "smoke_test_only": true,
+  "source_sha256": "fceede5a3e47bc938eb4d82ac3c97c918ada770c01b77213e0af782f3218a623",
+  "requested_fields": [
+    "奖项/名次"
+  ],
+  "returned_fields": [
+    "奖项/名次"
+  ],
+  "crop_sha256": [
+    "18e0bb69ec448720c7816d7d3f4a09b2b607ee1335ad7c5e07f18ff59e86c411"
+  ],
+  "whole_image_sent": false,
+  "strict_schema_passed": true,
+  "expected_match": true,
+  "response_sha256": "09753867f6c13dc571654af3fd47f8aa52c21cc59a07ef5c3d0d1d170eb6cf52",
+  "cost_event_recorded": true,
+  "input_tokens": 147,
+  "output_tokens": 14,
+  "total_tokens": 161,
+  "limitations": [
+    "该报告只验证真实 VLM 必要裁剪调用，不替代 n≥30 奖状字段正式评测。",
+    "输入不是已授权真实业务奖状，只能作为工程集成烟雾测试。"
+  ]
+}

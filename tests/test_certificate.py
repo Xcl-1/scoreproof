@@ -275,7 +275,36 @@ class _VlmClient:
         return {"奖项/名次": "一等奖"}
 
 
+class _AllFieldsVlmClient:
+    def invoke(self, payload: dict[str, Any]) -> dict[str, str]:
+        return {field: f"建议:{field}" for field in payload["fields"]}
+
+
 class TestPipelineAndEvaluation:
+    def test_pipeline_calls_vlm_but_does_not_overwrite_validated_evidence(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        source = tmp_path / "certificate.png"
+        Image.new("RGB", (400, 200), "white").save(source)
+        monkeypatch.setenv("DASHSCOPE_API_KEY", "test-only")
+        result = extract_certificate(
+            source,
+            run_preprocess=False,
+            extractor=CertificateTextExtractor(client=FakeClient(_payload())),
+            ocr_result=_ocr(),
+            confidence_threshold=1.0,
+            provider="qwen-vl-plus",
+            call_vlm=True,
+            vlm_client=_AllFieldsVlmClient(),
+            vlm_crops_dir=tmp_path / "crops",
+        )
+        assert result.extraction.vlm.called is True
+        assert result.extraction.vlm.status == "called"
+        assert result.extraction.vlm.suggestions
+        assert result.evidence.fields["级别"] == "国家级"
+        assert all(not value.startswith("建议:") for value in result.evidence.fields.values())
+        assert result.extraction.manual_review_required is True
+
     def test_real_file_pipeline_and_cli(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:

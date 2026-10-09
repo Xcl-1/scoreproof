@@ -17,6 +17,7 @@ from .certificate import (
     extract_certificate_fields,
     extract_with_vlm,
 )
+from .vlm import QwenVlmClient, VlmProviderResponse, make_vlm_client
 
 __all__ = [
     "CERTIFICATE_FIELD_NAMES",
@@ -30,8 +31,11 @@ __all__ = [
     "FieldSignals",
     "VlmDecision",
     "VlmRegion",
+    "QwenVlmClient",
+    "VlmProviderResponse",
     "decide_vlm_fallback",
     "extract_certificate",
     "extract_certificate_fields",
     "extract_with_vlm",
+    "make_vlm_client",
 ]

@@ -32,6 +32,7 @@ from scoreproof.review import (
     ReviewReasonCode,
     ReviewResolution,
     ReviewResolveRequest,
+    ReviewSource,
     ReviewStatus,
     ReviewStore,
     ReviewTaskCreate,
@@ -83,6 +84,21 @@ class TestReviewSchema:
 
 
 class TestReviewStore:
+    def test_source_bbox_survives_sqlite_json_round_trip(self, tmp_path: Path) -> None:
+        db = tmp_path / "bbox-round-trip.sqlite"
+        request = _request().model_copy(
+            update={"source": ReviewSource(locator="page-1", bbox=(1.0, 2.0, 3.0, 4.0))}
+        )
+        with ReviewStore(db) as store:
+            created, was_created = store.create(request)
+            assert was_created is True
+            assert created.source is not None
+            assert created.source.bbox == (1.0, 2.0, 3.0, 4.0)
+        with ReviewStore(db) as reopened:
+            restored = reopened.require(created.review_task_id)
+            assert restored.source is not None
+            assert restored.source.bbox == (1.0, 2.0, 3.0, 4.0)
+
     def test_stable_id_idempotency_filters_and_restart(self, tmp_path: Path) -> None:
         db = tmp_path / "reviews.sqlite"
         with ReviewStore(db) as store:

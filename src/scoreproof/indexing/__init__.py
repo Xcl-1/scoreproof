@@ -6,6 +6,7 @@ from .hybrid import (
     FastEmbedEmbeddings,
     HashingEmbeddings,
     HybridIndexManifestStore,
+    IndexRecoveryReport,
     SearchIndexBatch,
     make_embedding_provider,
 )
@@ -26,6 +27,7 @@ __all__ = [
     "FastEmbedEmbeddings",
     "HashingEmbeddings",
     "HybridIndexManifestStore",
+    "IndexRecoveryReport",
     "IndexManifestStore",
     "ManifestDiff",
     "StoredChunk",
