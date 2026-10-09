@@ -119,7 +119,7 @@ scoreproof/
 │   ├── api/                  # FastAPI + SSE
 │   └── cli.py                # typer 命令行
 ├── reports/                  # 可复跑评测报告（样本量、版本、置信区间）
-├── tests/                    # 487 项自动化测试（合成/公开数据，无隐私）
+├── tests/                    # 488 项自动化测试（合成/公开数据，无隐私）
 └── web/                      # 前端占位（V3.0：P2 延后）
 ```
 
@@ -219,9 +219,11 @@ scoreproof/
 
 `data/eval/` 当前只有占位文件，四个优先门禁的正式样本均为 0。仓库另有 1 份真实公开跨页表 PDF、5 张合成奖状、合成 Excel/CSV 与单测生成文件；公开 PDF 的真实 `eval-complex-pdf` CLI 复测为 1/1，但 `formal_gate_eligible=false`，Wilson 95% CI 为 20.65%–100%，不能写作复杂 PDF 正式成功率。配套“真实文档测试包”中的学生申报和答案为仿真数据。
 
-新增 `audit-formal-data` 只读 CLI：按固定私有目录检查真实文件魔数、SHA-256、图片/样本对去重、授权与脱敏声明、七字段标签和正负例。公开报告只保存输入哈希与计数，不保存标注值。当前命令按预期退出 2，`reports/formal-data-inventory-v1.json` 四项均为 `formal_gate_eligible=false`。字段与查重的 `release-readiness` 现在要求严格报告 Schema、预检输入 Hash 及 Git HEAD 对齐；复制改名与简略伪造报告不能解除正式门禁。
+新增 `audit-formal-data` 只读 CLI：按固定私有目录检查真实文件魔数、SHA-256、图片/样本对去重、授权与脱敏声明、七字段标签和正负例。PDF 还按全部页面的渲染内容去重，改写元数据不能增加独立文件数。公开报告只保存输入哈希与计数，不保存标注值。当前命令按预期退出 2，`reports/formal-data-inventory-v1.json` 四项均为 `formal_gate_eligible=false`。字段与查重的 `release-readiness` 现在要求严格报告 Schema、预检输入 Hash 及 Git HEAD 对齐；复制改名与简略伪造报告不能解除正式门禁。
 
 可直接填写的目录、标注模板、所需数量、脱敏规则及下一步命令见 [阶段 7.10 数据准备清单](reports/phase-7-10-data-requirements.md)。模板位于 `data/sample/complex_pdf_regression_template.json`、`rule_extraction_template.json`、`certificate_fields_formal_template.jsonl` 和 `evidence_dedup_formal_template.json`；模板默认不具正式资格。奖状正式评测须在有逐批外部传输授权后显式使用 `--call-vlm`，VLM 建议仍不自动覆盖 Evidence。
+
+阶段 7.11 的[公开 PDF 候选来源](reports/public-pdf-candidates-v1.md)已记录官方站点与在线核查范围。候选未下载、未按版式标注，尚不构成正式评测集；当前环境直接下载官网 PDF 被拒绝。
 
 ### 人工复核队列与审计闭环
 

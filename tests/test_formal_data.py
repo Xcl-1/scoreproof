@@ -7,6 +7,7 @@ import hashlib
 import json
 from pathlib import Path
 
+import pymupdf
 from typer.testing import CliRunner
 
 from scoreproof.cli import app
@@ -75,6 +76,55 @@ def test_real_public_pdf_cannot_be_counted_thirty_times(tmp_path: Path) -> None:
         "cross_page_table": 1,
         "scanned": 1,
     }
+    assert gate.formal_gate_eligible is False
+
+
+def test_pdf_metadata_rewrite_cannot_expand_independent_document_count(tmp_path: Path) -> None:
+    root = tmp_path / "eval"
+    source = root / "complex-pdf"
+    source.mkdir(parents=True)
+    original = source / "original.pdf"
+    original.write_bytes(PUBLIC_PDF.read_bytes())
+    rewritten = source / "metadata-rewritten.pdf"
+    with pymupdf.open(original) as document:
+        metadata = document.metadata
+        metadata["title"] = "independence-regression"
+        document.set_metadata(metadata)
+        document.save(rewritten)
+    assert hashlib.sha256(original.read_bytes()).digest() != hashlib.sha256(rewritten.read_bytes()).digest()
+    cases = [
+        {
+            "case_id": "张三学号123456" if index else "public-original",
+            "document": name,
+            "scenario": "cross_page_table",
+            "real_document": True,
+            "synthetic": False,
+            "expected_table_fragments": ["论文"],
+            "expected_min_table_rows": 1,
+        }
+        for index, name in enumerate((original.name, rewritten.name))
+    ]
+    (source / "dataset.json").write_text(
+        json.dumps(
+            {
+                "dataset_version": "public-metadata-regression",
+                "authorization_reference": "public-source:local-readme",
+                "independent_real_documents": True,
+                "cases": cases,
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    out = tmp_path / "inventory.json"
+    invoked = CliRunner().invoke(app, ["audit-formal-data", str(root), "--out", str(out)])
+    assert invoked.exit_code == 2, invoked.output
+    report = FormalDataInventoryReport.model_validate_json(out.read_text(encoding="utf-8"))
+    gate = next(gate for gate in report.gates if gate.gate_id == "complex_pdf")
+    assert gate.sample_size == gate.unique_file_count == 1
+    assert gate.category_counts["cross_page_table"] == 1
+    assert any("PDF 页面内容重复" in problem for problem in gate.problems)
+    assert "张三" not in out.read_text(encoding="utf-8")
     assert gate.formal_gate_eligible is False
 
 

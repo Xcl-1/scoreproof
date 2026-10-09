@@ -1,8 +1,8 @@
 {
   "schema_version": "1.0",
-  "generated_at": "2026-10-09T06:17:47.194489+00:00",
-  "candidate_version": "bfb671a1eb1156c3bfcfd2ed19eed16b13f2a9f2",
-  "manifest_hash": "662e5bfab9a6ecf35ac7298f27395c961c3379b8d8913c4acf3eb4de2a4fac88",
+  "generated_at": "2026-10-09T07:03:56.439842+00:00",
+  "candidate_version": "ac0e8c9f416c766c75865b1a2a4d1518f200d877",
+  "manifest_hash": "dce9910d353224735e086d11a6b79ecfa38130f3a5a7efa2d817a1fafd96a48b",
   "status": "阻塞",
   "ready": false,
   "report_dir": "reports",
@@ -11,7 +11,7 @@
       "name": "quality",
       "path": "quality-gates-v1.json",
       "exists": true,
-      "sha256": "ce7882662f7c96a6042b26eebedd55bf726abf83a6717224ca777240e7335efc",
+      "sha256": "9f3cac53523d88ab088e2fda1c0776ab4971ab59b4b7db6d8501b425b0142565",
       "valid_json": true,
       "error": null
     },
@@ -19,7 +19,7 @@
       "name": "formal_data_inventory",
       "path": "formal-data-inventory-v1.json",
       "exists": true,
-      "sha256": "6b40f1e4c94c8328300e23439655b1f7e76ef293b5099538195b66adb452dbab",
+      "sha256": "3a1ff08c4e09bc7680925f0bbf4a4b14aced92aee23a9076882fbe7a4a19e01a",
       "valid_json": true,
       "error": null
     },
@@ -167,9 +167,9 @@
       "required": true,
       "status": "阻塞",
       "artifact": "quality-gates-v1.json",
-      "sample_size": 487,
+      "sample_size": 488,
       "metrics": {
-        "git_head": "bfb671a1eb1156c3bfcfd2ed19eed16b13f2a9f2",
+        "git_head": "ac0e8c9f416c766c75865b1a2a4d1518f200d877",
         "candidate_version_matches": true,
         "all_checks_passed": true
       },

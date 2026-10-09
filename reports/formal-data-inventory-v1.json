@@ -1,7 +1,7 @@
 {
   "schema_version": "1.0",
-  "generated_at": "2026-10-09T06:05:12.071848Z",
-  "git_head": "bfb671a1eb1156c3bfcfd2ed19eed16b13f2a9f2",
+  "generated_at": "2026-10-09T07:03:11.395590Z",
+  "git_head": "ac0e8c9f416c766c75865b1a2a4d1518f200d877",
   "source_sha256": "f71a5bdc5b38c745b1a40ef4668ef1182fcecfdb322a0f236aef301fb6c3d45f",
   "data_root": "data/eval",
   "public_real_pdf_count": 1,

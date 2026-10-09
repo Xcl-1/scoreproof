@@ -11,6 +11,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
 
+import pymupdf
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from ..evidence.certificate import CERTIFICATE_FIELD_NAMES
@@ -99,6 +100,26 @@ def _input_hash(manifest_hash: str, file_hashes: set[str]) -> str:
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
+def _pdf_rendered_sha256(path: Path) -> str:
+    """以全部页面的低分辨率像素识别仅改写元数据的同一文档。"""
+    digest = hashlib.sha256()
+    with pymupdf.open(path) as document:
+        if not document.page_count:
+            raise ValueError("PDF 无页面")
+        digest.update(document.page_count.to_bytes(8, "big"))
+        for page in document:
+            pixmap = page.get_pixmap(
+                matrix=pymupdf.Matrix(0.5, 0.5),
+                colorspace=pymupdf.csGRAY,
+                alpha=False,
+                annots=False,
+            )
+            digest.update(pixmap.width.to_bytes(4, "big"))
+            digest.update(pixmap.height.to_bytes(4, "big"))
+            digest.update(pixmap.samples)
+    return digest.hexdigest()
+
+
 def _safe_file(root: Path, name: object, suffixes: set[str]) -> Path | None:
     if not isinstance(name, str) or not name.strip():
         return None
@@ -151,21 +172,36 @@ def _pdf_audit(root: Path, relative: str) -> FormalDataGateAudit:
     except (OSError, ValueError) as exc:
         return _empty("complex_pdf", relative, f"清单 Schema 无效：{type(exc).__name__}")
     hashes: set[str] = set()
+    content_first_path: dict[str, Path] = {}
+    rendered_cache: dict[str, str] = {}
+    duplicate_paths: set[Path] = set()
     categories: dict[str, set[str]] = {key: set() for key in ("multi_column", "cross_page_table", "scanned")}
     problems: list[str] = []
-    for case in data.cases:
+    for index, case in enumerate(data.cases, 1):
         file = _safe_file(root / "complex-pdf", case.document, {".pdf"})
         if file is None:
-            problems.append(f"{case.case_id}: 文件缺失或路径不安全")
+            problems.append(f"第 {index} 例：文件缺失或路径不安全")
             continue
         digest = _sha256(file)
         hashes.add(digest)
-        categories[case.scenario].add(digest)
+        try:
+            rendered = rendered_cache.get(digest)
+            if rendered is None:
+                rendered = _pdf_rendered_sha256(file)
+                rendered_cache[digest] = rendered
+        except (OSError, RuntimeError, ValueError) as exc:
+            problems.append(f"第 {index} 例：PDF 无法完整渲染（{type(exc).__name__}）")
+            continue
+        first_path = content_first_path.setdefault(rendered, file)
+        if file != first_path and file not in duplicate_paths:
+            problems.append(f"第 {index} 例：PDF 页面内容重复或文件复制扩增")
+            duplicate_paths.add(file)
+        categories[case.scenario].add(rendered)
         if not case.real_document or case.synthetic:
-            problems.append(f"{case.case_id}: 非真实文档声明")
+            problems.append(f"第 {index} 例：非真实文档声明")
     counts = {key: len(values) for key, values in categories.items()}
-    if len(hashes) < 30:
-        problems.append(f"独立文件 {len(hashes)}/30")
+    if len(content_first_path) < 30:
+        problems.append(f"独立文件 {len(content_first_path)}/30")
     problems.extend(f"{key} {count}/10" for key, count in counts.items() if count < 10)
     if not data.authorization_reference:
         problems.append("缺少公开来源或授权引用")
@@ -176,8 +212,8 @@ def _pdf_audit(root: Path, relative: str) -> FormalDataGateAudit:
         manifest=relative,
         manifest_sha256=_sha256(source),
         input_sha256=_input_hash(_sha256(source), hashes),
-        sample_size=len(hashes),
-        unique_file_count=len(hashes),
+        sample_size=len(content_first_path),
+        unique_file_count=len(content_first_path),
         category_counts=counts,
         data_kind=(
             "synthetic"
@@ -190,7 +226,9 @@ def _pdf_audit(root: Path, relative: str) -> FormalDataGateAudit:
         ),
         authorization_reference_present=bool(data.authorization_reference),
         redaction_verified=True,
-        labels_consistent=not any("文件缺失" in item or "非真实" in item for item in problems),
+        labels_consistent=not any(
+            "文件缺失" in item or "非真实" in item or "PDF 页面内容重复" in item for item in problems
+        ),
         formal_gate_eligible=not problems,
         problems=problems,
     )
