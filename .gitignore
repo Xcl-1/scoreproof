@@ -8,6 +8,8 @@ data/sample/*
 !data/sample/user_trial_template.json
 !data/sample/complex_pdf_regression_template.json
 !data/sample/rule_extraction_template.json
+!data/sample/certificate_fields_formal_template.jsonl
+!data/sample/evidence_dedup_formal_template.json
 data/tmp/
 data/models/
 !data/raw/.gitkeep

@@ -50,6 +50,42 @@ def _evidence(
     )
 
 
+def test_all_negative_pairs_keep_recall_undefined_for_formal_gate() -> None:
+    report = evaluate_dedup_pairs(
+        [
+            DedupPairCase(
+                id="negative-only",
+                duplicate=False,
+                left=_evidence("left", fields={"姓名": "甲"}),
+                right=_evidence("right", fields={"姓名": "乙"}),
+            )
+        ],
+        dataset_version="negative-only-smoke",
+        independent_real_pairs=False,
+    )
+    assert report.recall_ci95 == (0.0, 0.0)
+    assert report.formal_gate_eligible is False
+
+
+def test_pair_report_does_not_save_raw_personal_fields_or_ids() -> None:
+    report = evaluate_dedup_pairs(
+        [
+            DedupPairCase(
+                id="张三的证书",
+                duplicate=True,
+                left=_evidence("张三-左", fields=_fields(name="张三")),
+                right=_evidence("张三-右", fields=_fields(name="张三")),
+                transformation="张三的私人备注",
+            )
+        ],
+        dataset_version="redaction-smoke",
+        independent_real_pairs=False,
+    )
+    assert "张三" not in report.model_dump_json()
+    assert report.results[0].id == "pair-1"
+    assert report.results[0].transformation is None
+
+
 class TestDedupDecision:
     def test_exact_file_hash_is_definite_and_never_auto_deletes(self, tmp_path: Path) -> None:
         image = tmp_path / "certificate.bin"

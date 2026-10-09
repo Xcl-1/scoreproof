@@ -83,9 +83,7 @@ def _payload() -> dict[str, Any]:
         "级别": _field("国家级一等奖", "国家级一等奖", [3]),
         "奖项/名次": _field("国家级一等奖", "国家级一等奖", [3]),
         "获奖日期": _field("2025年4月2日", "2025年4月2日", [6]),
-        "颁发单位": _field(
-            "全国大学生学科竞赛组织委员会", "全国大学生学科竞赛组织委员会", [5]
-        ),
+        "颁发单位": _field("全国大学生学科竞赛组织委员会", "全国大学生学科竞赛组织委员会", [5]),
         "团队属性": _field("团队项目", "团队项目", [4]),
     }
 
@@ -229,9 +227,7 @@ class TestVlmDecision:
         assert decision.regions[0].field == "奖项/名次"
 
     def test_provider_without_key_routes_to_manual_review(self) -> None:
-        decision = decide_vlm_fallback(
-            _low_fields(), provider="qwen-vl-plus", dashscope_configured=False
-        )
+        decision = decide_vlm_fallback(_low_fields(), provider="qwen-vl-plus", dashscope_configured=False)
         assert decision.status == "key_missing"
         assert any("DASHSCOPE_API_KEY" in reason for reason in decision.reasons)
 
@@ -305,9 +301,7 @@ class TestPipelineAndEvaluation:
         assert all(not value.startswith("建议:") for value in result.evidence.fields.values())
         assert result.extraction.manual_review_required is True
 
-    def test_real_file_pipeline_and_cli(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_real_file_pipeline_and_cli(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         source = tmp_path / "certificate.png"
         Image.new("RGB", (800, 500), "white").save(source)
         fake_extractor = CertificateTextExtractor(client=FakeClient(_payload()))
@@ -327,9 +321,7 @@ class TestPipelineAndEvaluation:
         )
         monkeypatch.setattr(CertificateTextExtractor, "available", lambda self: True)
         output = tmp_path / "result.json"
-        invoked = CliRunner().invoke(
-            app, ["extract-certificate", str(source), "--raw", "--out", str(output)]
-        )
+        invoked = CliRunner().invoke(app, ["extract-certificate", str(source), "--raw", "--out", str(output)])
         assert invoked.exit_code == 0, invoked.output
         saved = json.loads(output.read_text(encoding="utf-8"))
         assert saved["extraction"]["fields"]["姓名"]["normalized_value"] == "学生001"
@@ -381,6 +373,43 @@ class TestPipelineAndEvaluation:
         assert report.smoke_test_only is True and report.formal_gate_eligible is False
         assert report.raw_micro is None and report.raw_labeled_values == 0
 
+    def test_missing_all_fields_keeps_zero_denominator_as_smoke(self) -> None:
+        report = evaluate_certificate_fields(
+            [{"evidence_id": "empty", "synthetic": True}],
+            [{"evidence_id": "empty", "extraction": {"fields": {}, "vlm": {}}}],
+        )
+        assert report.micro.precision_ci95 == (0.0, 0.0)
+        assert report.micro.recall_ci95 == (0.0, 0.0)
+        assert report.formal_gate_eligible is False
+
+    def test_all_null_raw_field_does_not_claim_formal_eligibility(self) -> None:
+        names = ("姓名", "赛事名称", "级别", "奖项/名次", "获奖日期", "颁发单位", "团队属性")
+        labels = [
+            {
+                "evidence_id": f"E{index}",
+                "raw_fields": {name: None for name in names},
+                "synthetic": False,
+            }
+            for index in range(30)
+        ]
+        predictions = [
+            {"evidence_id": label["evidence_id"], "extraction": {"fields": {}, "vlm": {}}}
+            for label in labels
+        ]
+        report = evaluate_certificate_fields(
+            labels,
+            predictions,
+            formal_data_verified=True,
+            source_sha256="a" * 64,
+            git_head="b" * 40,
+            unique_image_hashes=30,
+            real_pipeline_entry=True,
+            vlm_evaluation_enabled=True,
+        )
+        assert report.formal_gate_eligible is False
+        assert report.smoke_test_only is True
+        assert report.raw_per_field == {}
+
     def test_raw_and_normalized_values_are_evaluated_separately(self) -> None:
         label = {
             "evidence_id": "E1",
@@ -413,10 +442,7 @@ class TestPipelineAndEvaluation:
             }
         )
         raw = dict(label["raw_fields"])
-        fields = {
-            name: {"normalized_value": normalized[name], "raw_value": raw[name]}
-            for name in normalized
-        }
+        fields = {name: {"normalized_value": normalized[name], "raw_value": raw[name]} for name in normalized}
         report = evaluate_certificate_fields(
             [label],
             [{"evidence_id": "E1", "extraction": {"fields": fields, "vlm": {}}}],
@@ -427,4 +453,6 @@ class TestPipelineAndEvaluation:
 
 
 def _expected_prediction_values() -> dict[str, str]:
-    return {name: "" for name in ("姓名", "赛事名称", "级别", "奖项/名次", "获奖日期", "颁发单位", "团队属性")}
+    return {
+        name: "" for name in ("姓名", "赛事名称", "级别", "奖项/名次", "获奖日期", "颁发单位", "团队属性")
+    }

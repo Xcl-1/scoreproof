@@ -8,7 +8,7 @@ from pathlib import Path
 from typer.testing import CliRunner
 
 import scoreproof.eval.readiness as readiness_module
-from scoreproof.cli import app
+from scoreproof.cli import _write_report_json, app
 from scoreproof.eval.readiness import (
     QualityCommandResult,
     QualityGateReport,
@@ -49,6 +49,11 @@ def _copy_existing_reports(target: Path) -> None:
 
 
 class TestQualityGates:
+    def test_report_writer_preserves_lf_on_windows(self, tmp_path: Path) -> None:
+        report = tmp_path / "quality.json"
+        _write_report_json(report, '{\n  "passed": true\n}\n')
+        assert b"\r" not in report.read_bytes()
+
     def test_runs_fixed_commands_and_reads_git_state(self, tmp_path: Path, monkeypatch) -> None:
         def fake_run(name: str, command: list[str], **_: object) -> QualityCommandResult:
             output = "382 passed in 1.0s" if name == "pytest" else "passed"
@@ -80,9 +85,7 @@ class TestQualityGates:
 
 
 class TestReleaseReadiness:
-    def test_existing_formal_reports_pass_but_smoke_never_passes_formal_gates(
-        self, tmp_path: Path
-    ) -> None:
+    def test_existing_formal_reports_pass_but_smoke_never_passes_formal_gates(self, tmp_path: Path) -> None:
         _copy_existing_reports(tmp_path)
         _write(tmp_path / "quality-gates-v1.json", _quality())
 
@@ -109,10 +112,7 @@ class TestReleaseReadiness:
         stored_cost = json.loads((tmp_path / "cost-summary-v1.json").read_text(encoding="utf-8"))
         assert report.cost_summary.total_tokens == stored_cost["total_tokens"]
         assert report.cost_summary.usage_coverage_rate == stored_cost["usage_coverage_rate"]
-        assert (
-            report.cost_summary.monetary_cost_available
-            is stored_cost["monetary_cost_available"]
-        )
+        assert report.cost_summary.monetary_cost_available is stored_cost["monetary_cost_available"]
 
     def test_dirty_worktree_blocks_candidate_freeze(self, tmp_path: Path) -> None:
         _write(tmp_path / "quality-gates-v1.json", _quality(clean=False))
@@ -121,7 +121,7 @@ class TestReleaseReadiness:
         assert gate.status == "阻塞"
         assert any("工作树不干净" in reason for reason in gate.reasons)
 
-    def test_zero_vlm_trigger_is_valid_for_formal_field_threshold(self, tmp_path: Path) -> None:
+    def test_minimal_forged_certificate_report_cannot_clear_gate(self, tmp_path: Path) -> None:
         _write(
             tmp_path / "certificate-fields-formal-v1.json",
             {
@@ -133,9 +133,10 @@ class TestReleaseReadiness:
         )
         report = build_release_readiness(tmp_path, candidate_version="candidate")
         gate = next(item for item in report.gates if item.id == "certificate_fields")
-        assert gate.status == "通过"
+        assert gate.status == "阻塞"
+        assert any("Schema 无效" in reason for reason in gate.reasons)
 
-    def test_formal_dedup_requires_intervals_and_both_targets(self, tmp_path: Path) -> None:
+    def test_minimal_forged_dedup_report_cannot_clear_gate(self, tmp_path: Path) -> None:
         _write(
             tmp_path / "evidence-dedup-formal-v1.json",
             {
@@ -149,12 +150,14 @@ class TestReleaseReadiness:
         )
         report = build_release_readiness(tmp_path, candidate_version="candidate")
         gate = next(item for item in report.gates if item.id == "evidence_dedup")
-        assert gate.status == "通过"
+        assert gate.status == "阻塞"
+        assert any("Schema 无效" in reason for reason in gate.reasons)
 
     def test_formal_rule_extraction_requires_strict_report_and_n50(self, tmp_path: Path) -> None:
         smoke = json.loads(
-            (Path(__file__).resolve().parents[1] / "reports" / "rule-extraction-smoke-v1.json")
-            .read_text(encoding="utf-8")
+            (Path(__file__).resolve().parents[1] / "reports" / "rule-extraction-smoke-v1.json").read_text(
+                encoding="utf-8"
+            )
         )
         base_result = smoke["results"][0]
         smoke.update(
@@ -228,8 +231,9 @@ class TestReleaseReadiness:
 
     def test_forged_rule_extraction_counts_cannot_pass(self, tmp_path: Path) -> None:
         smoke = json.loads(
-            (Path(__file__).resolve().parents[1] / "reports" / "rule-extraction-smoke-v1.json")
-            .read_text(encoding="utf-8")
+            (Path(__file__).resolve().parents[1] / "reports" / "rule-extraction-smoke-v1.json").read_text(
+                encoding="utf-8"
+            )
         )
         smoke.update(
             sample_size=50,
@@ -273,9 +277,7 @@ class TestReleaseReadiness:
         assert gate.status == "通过"
         assert gate.sample_size == 2
 
-    def test_one_click_demo_requires_smoke_flags_steps_and_artifact_hashes(
-        self, tmp_path: Path
-    ) -> None:
+    def test_one_click_demo_requires_smoke_flags_steps_and_artifact_hashes(self, tmp_path: Path) -> None:
         artifact_names = (
             "rules_input",
             "claims_input",

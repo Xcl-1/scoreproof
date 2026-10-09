@@ -119,7 +119,7 @@ scoreproof/
 │   ├── api/                  # FastAPI + SSE
 │   └── cli.py                # typer 命令行
 ├── reports/                  # 可复跑评测报告（样本量、版本、置信区间）
-├── tests/                    # 478 项自动化测试（合成/公开数据，无隐私）
+├── tests/                    # 487 项自动化测试（合成/公开数据，无隐私）
 └── web/                      # 前端占位（V3.0：P2 延后）
 ```
 
@@ -178,6 +178,7 @@ scoreproof/
 | `scoreproof check-evidence-consistency claim.json evidence.json --policy policy.json` | 逐字段核对姓名、赛事别名、等级奖项、学年、团队、单位/目录和类别；信息不足进入人工复核 |
 | `scoreproof eval-evidence-dedup pairs.json --out report.json` | 输出查重 Recall、Precision、F1、Wilson 区间与混淆矩阵；n<50 或非独立真实样本自动标记为仅烟雾测试 |
 | `scoreproof review-list --db review.sqlite --status pending` | 筛选人工复核队列；另有 `review-show/start/resolve/dismiss/export`，所有写操作校验 revision 并保留审计 |
+| `scoreproof audit-formal-data data/eval --out reports/formal-data-inventory-v1.json` | 在模型调用前只读核查四个优先正式门禁的清单、授权/脱敏声明、真实文件 Hash、独立去重与标签完整性；无合格数据时退出码 2 |
 | `scoreproof quality-gates --out reports/quality-gates-v1.json` | 真实运行 pytest、Ruff、mypy、离线锁文件与 diff 检查，并记录 Git HEAD、耗时和工作树冻结状态 |
 | `scoreproof release-readiness --candidate-version <commit>` | 汇总 RC 门禁、报告 SHA-256、成本调用量和阻塞项；烟雾报告永远不能使正式门禁通过 |
 | `scoreproof cost-report --out reports/cost-summary-v1.json` | 从 `cost_events` 汇总真实 token、缓存命中、强模型/二次抽取比例及显式价格成本；缺价格时不猜金额 |
@@ -213,6 +214,14 @@ scoreproof/
 
 当前 `reports/rule-extraction-smoke-v1.json` 仅使用 1 条合成清晰规则。真实 DeepSeek CLI 调用和
 五道网关已跑通，1/1 完全匹配，但该数字只验证工程链路，不能作为正式抽取指标或简历数字。
+
+### 阶段 7.10 正式数据盘点
+
+`data/eval/` 当前只有占位文件，四个优先门禁的正式样本均为 0。仓库另有 1 份真实公开跨页表 PDF、5 张合成奖状、合成 Excel/CSV 与单测生成文件；公开 PDF 的真实 `eval-complex-pdf` CLI 复测为 1/1，但 `formal_gate_eligible=false`，Wilson 95% CI 为 20.65%–100%，不能写作复杂 PDF 正式成功率。配套“真实文档测试包”中的学生申报和答案为仿真数据。
+
+新增 `audit-formal-data` 只读 CLI：按固定私有目录检查真实文件魔数、SHA-256、图片/样本对去重、授权与脱敏声明、七字段标签和正负例。公开报告只保存输入哈希与计数，不保存标注值。当前命令按预期退出 2，`reports/formal-data-inventory-v1.json` 四项均为 `formal_gate_eligible=false`。字段与查重的 `release-readiness` 现在要求严格报告 Schema、预检输入 Hash 及 Git HEAD 对齐；复制改名与简略伪造报告不能解除正式门禁。
+
+可直接填写的目录、标注模板、所需数量、脱敏规则及下一步命令见 [阶段 7.10 数据准备清单](reports/phase-7-10-data-requirements.md)。模板位于 `data/sample/complex_pdf_regression_template.json`、`rule_extraction_template.json`、`certificate_fields_formal_template.jsonl` 和 `evidence_dedup_formal_template.json`；模板默认不具正式资格。奖状正式评测须在有逐批外部传输授权后显式使用 `--call-vlm`，VLM 建议仍不自动覆盖 Evidence。
 
 ### 人工复核队列与审计闭环
 
@@ -288,7 +297,7 @@ uv run scoreproof backtest data/eval/backtest-2025-2026/claims.xlsx \
 | 阶段 4 | 增量索引、混合检索、LangChain 工具编排 | ✅ 4.1～4.5 已完成：索引、混合检索、五工具状态机、代码级引用门禁与成对拒答评测均通过真实 CLI/API 验收 |
 | 阶段 5 | 确定性计算与 52 人回测 | 🟡 逐人/逐项回测、双口径、完整差异与 52 人门禁已落地；5 人合成文件真实 CLI 通过，52 人脱敏历史数据待提供 |
 | 阶段 6 | OCR + LLM/VLM + 查重 + 人工复核 | 🟡 **6.1～6.4 工具链已落地但阶段未完成**：真实 RapidOCR + DeepSeek、真实 qwen-vl-plus 必要裁剪、联合查重/一致性及复核 SQLite/CLI/Uvicorn 链路已分别跑通；VLM 仅为 n=1 合成裁剪集成烟雾，n≥30 真实脱敏字段集与 n≥50 对独立真实查重集仍缺 |
-| 阶段 7 | 消融、全量评测与结项 | 🟡 **候选门禁、规则抽取评测、成本可观测、用户试用评测、一键演示、真实 VLM 集成、规则/索引跨进程发布加固及持久化批量核算/导出已落地，阶段未完成**：工程烟雾链路不替代业务验收；尚无 n≥50 规则金标、已授权真实用户记录及其他正式数据，52 人回测和完整货币成本仍阻塞 |
+| 阶段 7 | 消融、全量评测与结项 | 🟡 **阶段 7.10 数据盘点与预检已落地，阶段未完成**：四个优先正式数据目录均为空，工程烟雾链路不替代业务验收；规则金标、奖状、查重、52 人回测和真实用户试用仍缺 |
 
 ## 测试
 

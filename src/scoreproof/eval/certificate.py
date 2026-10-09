@@ -5,10 +5,11 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Iterable, Mapping
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal, Self
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from ..evidence.certificate import CERTIFICATE_FIELD_NAMES
 from ..normalize import parse_prize, parse_tier
@@ -16,7 +17,7 @@ from .gateway import wilson_interval
 
 
 class FieldMetric(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", strict=True)
 
     true_positive: int = 0
     false_positive: int = 0
@@ -29,9 +30,20 @@ class FieldMetric(BaseModel):
 
 
 class CertificateEvaluationReport(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", strict=True)
 
-    dataset_version: str
+    schema_version: Literal["1.0"] = "1.0"
+    generated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    git_head: str | None = Field(default=None, pattern=r"^[0-9a-f]{40}$")
+    source_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    dataset_kind: Literal["synthetic", "real_redacted"] = "synthetic"
+    authorization_verified: bool = False
+    redaction_verified: bool = False
+    independent_real_samples: bool = False
+    unique_image_hashes: int = Field(default=0, ge=0)
+    real_pipeline_entry: bool = False
+    vlm_evaluation_enabled: bool = False
+    dataset_version: str = Field(pattern=r"^[A-Za-z0-9._-]{1,80}$")
     config_hash: str
     models: list[str]
     confidence_thresholds: list[float]
@@ -57,7 +69,36 @@ class CertificateEvaluationReport(BaseModel):
     vlm_called: int
     vlm_call_rate: float
     vlm_call_ci95: tuple[float, float]
+    vlm_micro_f1_gain: float | None = None
     notes: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _formal_provenance_and_counts(self) -> Self:
+        if self.formal_gate_eligible and (
+            self.smoke_test_only
+            or self.synthetic
+            or self.sample_size < 30
+            or self.raw_complete_samples != self.sample_size
+            or self.raw_labeled_values != self.sample_size * len(CERTIFICATE_FIELD_NAMES)
+            or set(self.per_field) != set(CERTIFICATE_FIELD_NAMES)
+            or set(self.raw_per_field) != set(CERTIFICATE_FIELD_NAMES)
+            or self.dataset_kind != "real_redacted"
+            or not self.authorization_verified
+            or not self.redaction_verified
+            or not self.independent_real_samples
+            or self.unique_image_hashes != self.sample_size
+            or not self.real_pipeline_entry
+            or not self.vlm_evaluation_enabled
+            or self.vlm_micro_f1_gain is None
+            or self.source_sha256 is None
+            or self.git_head is None
+        ):
+            raise ValueError("字段正式报告缺少独立真实脱敏数据、完整七字段或可追溯主链路")
+        if self.exact_certificates > self.sample_size or self.vlm_triggered > self.sample_size:
+            raise ValueError("字段报告计数超过样本量")
+        if self.vlm_called > self.vlm_triggered:
+            raise ValueError("VLM 调用数不能超过触发数")
+        return self
 
 
 def _metric(tp: int, fp: int, fn: int) -> FieldMetric:
@@ -69,9 +110,9 @@ def _metric(tp: int, fp: int, fn: int) -> FieldMetric:
         false_positive=fp,
         false_negative=fn,
         precision=round(precision, 4),
-        precision_ci95=wilson_interval(tp, tp + fp),
+        precision_ci95=wilson_interval(tp, tp + fp) if tp + fp else (0.0, 0.0),
         recall=round(recall, 4),
-        recall_ci95=wilson_interval(tp, tp + fn),
+        recall_ci95=wilson_interval(tp, tp + fn) if tp + fn else (0.0, 0.0),
         f1=round(f1, 4),
     )
 
@@ -149,6 +190,12 @@ def evaluate_certificate_fields(
     predictions: Iterable[Mapping[str, Any]],
     *,
     dataset_version: str = "unversioned",
+    formal_data_verified: bool = False,
+    source_sha256: str | None = None,
+    git_head: str | None = None,
+    unique_image_hashes: int = 0,
+    real_pipeline_entry: bool = False,
+    vlm_evaluation_enabled: bool = False,
 ) -> CertificateEvaluationReport:
     gold = list(labels)
     predicted = list(predictions)
@@ -158,9 +205,7 @@ def evaluate_certificate_fields(
         raise ValueError(f"标签与预测数量不一致：{len(gold)} != {len(predicted)}")
     label_ids = [str(item.get("evidence_id") or index) for index, item in enumerate(gold)]
     prediction_by_id = {
-        str(item.get("evidence_id")): item
-        for item in predicted
-        if item.get("evidence_id") is not None
+        str(item.get("evidence_id")): item for item in predicted if item.get("evidence_id") is not None
     }
     if prediction_by_id:
         missing = [item_id for item_id in label_ids if item_id not in prediction_by_id]
@@ -211,21 +256,27 @@ def evaluate_certificate_fields(
 
     per_field = {name: _metric(*values) for name, values in counts.items()}
     totals = [sum(values[index] for values in counts.values()) for index in range(3)]
-    raw_per_field = {
-        name: _metric(*values)
-        for name, values in raw_counts.items()
-        if sum(values) > 0
-    }
+    raw_per_field = {name: _metric(*values) for name, values in raw_counts.items() if sum(values) > 0}
     raw_totals = [sum(values[index] for values in raw_counts.values()) for index in range(3)]
     n = len(gold)
     synthetic = any(bool(item.get("synthetic")) for item in gold)
-    smoke_only = synthetic or n < 30
+    formal = (
+        formal_data_verified
+        and not synthetic
+        and n >= 30
+        and unique_image_hashes == n
+        and real_pipeline_entry
+        and vlm_evaluation_enabled
+        and (triggered == 0 or called > 0)
+        and raw_labeled == n * len(CERTIFICATE_FIELD_NAMES)
+        and set(raw_per_field) == set(CERTIFICATE_FIELD_NAMES)
+    )
+    smoke_only = not formal
     models = sorted(
         {
             str(extraction.get("model"))
             for item in predicted
-            if isinstance((extraction := item.get("extraction")), Mapping)
-            and extraction.get("model")
+            if isinstance((extraction := item.get("extraction")), Mapping) and extraction.get("model")
         }
     )
     thresholds = sorted(
@@ -249,12 +300,23 @@ def evaluate_certificate_fields(
     ).hexdigest()
     notes: list[str] = []
     if smoke_only:
-        notes.append("仅烟雾测试：合成数据或样本量小于正式字段评测要求 n≥30。")
+        notes.append("仅烟雾测试：未同时满足 n≥30、独立真实脱敏文件、完整七字段与真实抽取入口。")
     if synthetic:
         notes.append("数据含合成图片，不得作为正式业务字段 F1 验收或简历数字。")
+    if vlm_evaluation_enabled:
+        notes.append("VLM 建议不自动覆盖 Evidence；以受校验结果前后差值计，当前增益为 0。")
     if raw_labeled < n * len(CERTIFICATE_FIELD_NAMES):
         notes.append("标签未完整提供 raw_fields，原始值 F1 仅评测已标注字段；本次为空时报告 null。")
     return CertificateEvaluationReport(
+        git_head=git_head,
+        source_sha256=source_sha256,
+        dataset_kind="real_redacted" if formal_data_verified else "synthetic",
+        authorization_verified=formal_data_verified,
+        redaction_verified=formal_data_verified,
+        independent_real_samples=formal_data_verified,
+        unique_image_hashes=unique_image_hashes,
+        real_pipeline_entry=real_pipeline_entry,
+        vlm_evaluation_enabled=vlm_evaluation_enabled,
         dataset_version=dataset_version,
         config_hash=config_hash,
         models=models,
@@ -262,11 +324,7 @@ def evaluate_certificate_fields(
         sample_size=n,
         synthetic=synthetic,
         smoke_test_only=smoke_only,
-        formal_gate_eligible=(
-            not smoke_only
-            and n >= 30
-            and raw_labeled == n * len(CERTIFICATE_FIELD_NAMES)
-        ),
+        formal_gate_eligible=formal,
         micro=_metric(*totals),
         per_field=per_field,
         raw_micro=_metric(*raw_totals) if raw_labeled else None,
@@ -275,9 +333,7 @@ def evaluate_certificate_fields(
         raw_complete_samples=raw_complete,
         raw_exact_certificates=raw_exact,
         raw_exact_certificate_rate=(round(raw_exact / raw_complete, 4) if raw_complete else None),
-        raw_exact_certificate_ci95=(
-            wilson_interval(raw_exact, raw_complete) if raw_complete else None
-        ),
+        raw_exact_certificate_ci95=(wilson_interval(raw_exact, raw_complete) if raw_complete else None),
         exact_certificates=exact,
         exact_certificate_rate=round(exact / n, 4) if n else 0.0,
         exact_certificate_ci95=wilson_interval(exact, n),
@@ -287,6 +343,7 @@ def evaluate_certificate_fields(
         vlm_called=called,
         vlm_call_rate=round(called / n, 4) if n else 0.0,
         vlm_call_ci95=wilson_interval(called, n),
+        vlm_micro_f1_gain=0.0 if vlm_evaluation_enabled else None,
         notes=notes,
     )
 

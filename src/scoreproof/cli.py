@@ -32,6 +32,7 @@ from .eval.certificate import evaluate_certificate_fields, load_jsonl
 from .eval.citation import evaluate_citation_refusal, load_refusal_cases
 from .eval.dedup import evaluate_dedup_pairs, load_dedup_dataset
 from .eval.demo import DemoRunError, run_smoke_demo
+from .eval.formal_data import FormalDataGateAudit, audit_formal_data
 from .eval.gateway import GatewayNegativeCase, evaluate_gateway_negatives
 from .eval.pdf_regression import evaluate_pdf_regression, load_pdf_regression_dataset
 from .eval.readiness import build_release_readiness, run_quality_gates
@@ -95,6 +96,49 @@ app = typer.Typer(
     add_completion=False,
 )
 console = Console()
+
+
+def _write_report_json(out: Path, encoded: str) -> None:
+    """固定 LF，避免 Windows 写盘后被 git diff --check 视为尾随空白。"""
+    out.parent.mkdir(parents=True, exist_ok=True)
+    with out.open("w", encoding="utf-8", newline="\n") as stream:
+        stream.write(encoded)
+
+
+@app.command("audit-formal-data")
+def audit_formal_data_command(
+    data_root: Path = typer.Argument(
+        PROJECT_ROOT / "data" / "eval",
+        exists=True,
+        file_okay=False,
+        help="正式评测数据根目录；只读取清单及其引用文件",
+    ),
+    out: Path | None = typer.Option(None, "--out", help="保存不含标注值的严格 JSON 预检报告"),
+    enforce: bool = typer.Option(
+        True, "--enforce/--no-enforce", help="无任何具备数据资格的正式门禁时退出码 2"
+    ),
+) -> None:
+    """盘点四个优先门禁的真实文件、授权、去重与标签完整性。"""
+    report = audit_formal_data(data_root, project_root=PROJECT_ROOT)
+    encoded = report.model_dump_json(indent=2)
+    console.print_json(encoded)
+    if out:
+        _write_report_json(out, encoded)
+        console.print(f"已写出：{out}")
+    if enforce and not report.formal_gate_eligible:
+        raise typer.Exit(code=2)
+
+
+def _verified_formal_gate(
+    source: Path, *, directory: str, filename: str, gate_id: str
+) -> tuple[FormalDataGateAudit | None, str | None]:
+    """只有标准隔离目录的清单才可携带预检资格进入正式评测。"""
+    resolved = source.resolve()
+    if resolved.name != filename or resolved.parent.name != directory:
+        return None, None
+    inventory = audit_formal_data(resolved.parent.parent, project_root=PROJECT_ROOT)
+    gate = next(item for item in inventory.gates if item.gate_id == gate_id)
+    return gate, inventory.git_head
 
 
 def _embedding_provider(
@@ -278,9 +322,7 @@ def list_rule_versions(
     with RuleStore(db or settings.db_path) as store:
         versions = store.list_rule_versions()
     if as_json:
-        console.print_json(
-            data={"versions": [item.model_dump(mode="json") for item in versions]}
-        )
+        console.print_json(data={"versions": [item.model_dump(mode="json") for item in versions]})
         return
     table = Table(title=f"规则版本（{len(versions)} 个）")
     for column in ("活动", "版本", "规则数", "来源", "父版本", "创建者", "创建时间"):
@@ -1051,7 +1093,9 @@ def eval_vlm_integration_command(
         raise typer.BadParameter("bbox 必须是四个逗号分隔的数字") from exc
     if len(coordinates) != 4:
         raise typer.BadParameter("bbox 必须包含 left,top,right,bottom")
-    region = VlmRegion(field=field, bbox=cast(tuple[float, float, float, float], coordinates), reason="integration-test")
+    region = VlmRegion(
+        field=field, bbox=cast(tuple[float, float, float, float], coordinates), reason="integration-test"
+    )
     with CostLedger(cost_db) as ledger:
         before = len(ledger.list_events())
         try:
@@ -1070,11 +1114,7 @@ def eval_vlm_integration_command(
         events = ledger.list_events()[before:]
     crop_paths = sorted(crops_dir.glob(f"{image.stem}-crop-*.png"))
     success_event = next(
-        (
-            item
-            for item in reversed(events)
-            if item.purpose == "certificate_vlm_crop" and item.status == "ok"
-        ),
+        (item for item in reversed(events) if item.purpose == "certificate_vlm_crop" and item.status == "ok"),
         None,
     )
     report = build_vlm_integration_report(
@@ -1092,8 +1132,7 @@ def eval_vlm_integration_command(
         total_tokens=success_event.total_tokens if success_event else None,
     )
     encoded = report.model_dump_json(indent=2)
-    out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(encoded, encoding="utf-8")
+    _write_report_json(out, encoded)
     console.print_json(encoded)
     console.print(f"已写出：{out}")
     if report.result != "passed":
@@ -1114,12 +1153,19 @@ def eval_certificate_fields_command(
         None, "--predictions-out", help="保存本次实际抽取的逐图预测 JSONL"
     ),
     run_preprocess: bool = typer.Option(False, "--preprocess/--raw", help="实际抽取时是否预处理"),
+    vlm_provider: str | None = typer.Option(None, "--vlm-provider", help="已获授权的视觉模型"),
+    call_vlm: bool = typer.Option(
+        False, "--call-vlm/--no-call-vlm", help="显式允许发送必要裁剪并测量 VLM 增益"
+    ),
     dataset_version: str = typer.Option("certificate-fields-v1", "--dataset-version"),
     out: Path | None = typer.Option(None, "--out", help="评测报告 JSON"),
     cost_db: Path | None = typer.Option(None, "--cost-db", help="实际抽取时的模型成本账本"),
 ) -> None:
     """评测字段 micro-F1/逐字段 F1/整证正确率/VLM 触发率与样本量。"""
     label_rows = load_jsonl(labels)
+    gate, head = _verified_formal_gate(
+        labels, directory="certificate-fields", filename="labels.jsonl", gate_id="certificate_fields"
+    )
     if predictions is not None:
         prediction_rows = load_jsonl(predictions)
     else:
@@ -1130,10 +1176,12 @@ def eval_certificate_fields_command(
                 image_path = label.get("image_path")
                 if not isinstance(image_path, str) or not image_path.strip():
                     raise typer.BadParameter("省略 --predictions 时，每条标签必须包含 image_path")
-                image = Path(image_path)
+                image = (labels.parent / image_path).resolve() if gate else Path(image_path)
                 result = extract_certificate(
                     image,
                     run_preprocess=run_preprocess,
+                    provider=vlm_provider,
+                    call_vlm=call_vlm,
                     cost_ledger=ledger,
                     batch_id=f"certificate-eval:{_file_sha256(image)[:16]}",
                 )
@@ -1150,6 +1198,12 @@ def eval_certificate_fields_command(
         label_rows,
         prediction_rows,
         dataset_version=dataset_version,
+        formal_data_verified=bool(gate and gate.formal_gate_eligible),
+        source_sha256=gate.input_sha256 if gate else None,
+        git_head=head,
+        unique_image_hashes=gate.unique_file_count if gate else 0,
+        real_pipeline_entry=predictions is None,
+        vlm_evaluation_enabled=call_vlm and predictions is None,
     )
     encoded = report.model_dump_json(indent=2)
     console.print_json(encoded)
@@ -1262,10 +1316,26 @@ def eval_evidence_dedup_command(
 ) -> None:
     """输出 Recall/Precision/F1、混淆矩阵和 n≥50 正式门禁。"""
     version, independent, cases = load_dedup_dataset(dataset)
+    gate, head = _verified_formal_gate(
+        dataset, directory="evidence-dedup", filename="pairs.json", gate_id="evidence_dedup"
+    )
+    if gate and gate.formal_gate_eligible:
+        for case in cases:
+            for evidence in (case.left, case.right):
+                if evidence.path is None:
+                    raise typer.BadParameter("正式查重样本必须有真实图片路径")
+                image = (dataset.parent / evidence.path).resolve()
+                evidence.path = str(image)
+                evidence.phash = phash(image)
     report = evaluate_dedup_pairs(
         cases,
         dataset_version=version,
         independent_real_pairs=independent,
+        formal_data_verified=bool(gate and gate.formal_gate_eligible),
+        source_sha256=gate.input_sha256 if gate else None,
+        git_head=head,
+        unique_pair_hashes=gate.sample_size if gate and gate.formal_gate_eligible else 0,
+        real_cli_entry=True,
         thresholds=DuplicateThresholds(
             phash_definite_max=phash_definite_max,
             phash_suspected_max=phash_suspected_max,
@@ -1414,8 +1484,7 @@ def review_export_command(
     with ReviewStore(_review_database(db)) as store:
         payload = store.export()
     encoded = json.dumps(payload, ensure_ascii=False, indent=2)
-    out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(encoded, encoding="utf-8")
+    _write_report_json(out, encoded)
     console.print_json(encoded)
 
 
@@ -1430,8 +1499,7 @@ def quality_gates_command(
     """固定执行 pytest、Ruff、mypy、uv lock 与 git diff 检查。"""
     report = run_quality_gates(PROJECT_ROOT)
     encoded = report.model_dump_json(indent=2)
-    out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(encoded, encoding="utf-8")
+    _write_report_json(out, encoded)
     console.print_json(encoded)
     console.print(f"已写出：{out}")
     if not report.all_checks_passed:
@@ -1453,8 +1521,7 @@ def release_readiness_command(
     """汇总固定评测产物，烟雾结果不能使正式 RC 门禁通过。"""
     report = build_release_readiness(report_dir, candidate_version=candidate_version)
     encoded = report.model_dump_json(indent=2)
-    out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(encoded, encoding="utf-8")
+    _write_report_json(out, encoded)
     console.print_json(encoded)
     console.print(f"已写出：{out}")
     if enforce and not report.ready:

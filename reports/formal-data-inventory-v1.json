@@ -1,0 +1,84 @@
+{
+  "schema_version": "1.0",
+  "generated_at": "2026-10-09T06:05:12.071848Z",
+  "git_head": "bfb671a1eb1156c3bfcfd2ed19eed16b13f2a9f2",
+  "source_sha256": "f71a5bdc5b38c745b1a40ef4668ef1182fcecfdb322a0f236aef301fb6c3d45f",
+  "data_root": "data/eval",
+  "public_real_pdf_count": 1,
+  "synthetic_certificate_count": 5,
+  "gates": [
+    {
+      "gate_id": "complex_pdf",
+      "manifest": "complex-pdf/dataset.json",
+      "manifest_sha256": null,
+      "input_sha256": null,
+      "sample_size": 0,
+      "unique_file_count": 0,
+      "category_counts": {},
+      "data_kind": "missing",
+      "authorization_reference_present": false,
+      "redaction_verified": false,
+      "labels_consistent": false,
+      "formal_gate_eligible": false,
+      "problems": [
+        "缺少复杂 PDF 正式清单"
+      ]
+    },
+    {
+      "gate_id": "rule_extraction",
+      "manifest": "rule-extraction/dataset.json",
+      "manifest_sha256": null,
+      "input_sha256": null,
+      "sample_size": 0,
+      "unique_file_count": 0,
+      "category_counts": {},
+      "data_kind": "missing",
+      "authorization_reference_present": false,
+      "redaction_verified": false,
+      "labels_consistent": false,
+      "formal_gate_eligible": false,
+      "problems": [
+        "缺少规则抽取正式清单"
+      ]
+    },
+    {
+      "gate_id": "certificate_fields",
+      "manifest": "certificate-fields/labels.jsonl",
+      "manifest_sha256": null,
+      "input_sha256": null,
+      "sample_size": 0,
+      "unique_file_count": 0,
+      "category_counts": {},
+      "data_kind": "missing",
+      "authorization_reference_present": false,
+      "redaction_verified": false,
+      "labels_consistent": false,
+      "formal_gate_eligible": false,
+      "problems": [
+        "缺少奖状字段正式标签"
+      ]
+    },
+    {
+      "gate_id": "evidence_dedup",
+      "manifest": "evidence-dedup/pairs.json",
+      "manifest_sha256": null,
+      "input_sha256": null,
+      "sample_size": 0,
+      "unique_file_count": 0,
+      "category_counts": {},
+      "data_kind": "missing",
+      "authorization_reference_present": false,
+      "redaction_verified": false,
+      "labels_consistent": false,
+      "formal_gate_eligible": false,
+      "problems": [
+        "缺少证据查重正式成对清单"
+      ]
+    }
+  ],
+  "formal_gate_eligible": false,
+  "limitations": [
+    "预检核对文件、哈希、声明与标签完整性；授权真实性及脱敏质量仍须人工复核。",
+    "预检通过不代表模型指标通过，也不解除 release-readiness 正式门禁。"
+  ]
+}

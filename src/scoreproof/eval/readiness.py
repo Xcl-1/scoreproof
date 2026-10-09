@@ -18,7 +18,10 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 from ..review import ReviewWorkflowSmokeReport
+from .certificate import CertificateEvaluationReport
+from .dedup import DedupEvaluationReport
 from .demo import DemoReport
+from .formal_data import FormalDataGateAudit, FormalDataInventoryReport
 from .gateway import wilson_interval
 from .pdf_regression import PDFRegressionReport
 from .rule_extraction import RuleExtractionReport
@@ -112,6 +115,7 @@ class ReleaseReadinessReport(BaseModel):
 
 _ARTIFACTS: tuple[tuple[str, str], ...] = (
     ("quality", "quality-gates-v1.json"),
+    ("formal_data_inventory", "formal-data-inventory-v1.json"),
     ("complex_pdf", "complex-pdf-regression-v1.json"),
     ("rule_extraction", "rule-extraction-formal-v1.json"),
     ("rule_extraction_smoke", "rule-extraction-smoke-v1.json"),
@@ -250,9 +254,7 @@ def _missing_gate(gate_id: str, title: str, filename: str) -> ReadinessGate:
     )
 
 
-def _quality_gate(
-    payload: dict[str, Any] | None, filename: str, candidate_version: str
-) -> ReadinessGate:
+def _quality_gate(payload: dict[str, Any] | None, filename: str, candidate_version: str) -> ReadinessGate:
     if payload is None:
         return _missing_gate("quality", "自动化质量门禁与候选冻结", filename)
     try:
@@ -273,10 +275,7 @@ def _quality_gate(
         reasons.append("工作树不干净，候选版本尚未冻结到提交")
     version_matches = bool(
         report.git_head
-        and (
-            report.git_head.startswith(candidate_version)
-            or candidate_version.startswith(report.git_head)
-        )
+        and (report.git_head.startswith(candidate_version) or candidate_version.startswith(report.git_head))
     )
     if not version_matches:
         reasons.append("质量报告的 Git 提交与 candidate_version 不一致")
@@ -334,9 +333,7 @@ def _rule_extraction_gate(
             ],
         )
     try:
-        report = RuleExtractionReport.model_validate_json(
-            json.dumps(payload, ensure_ascii=False)
-        )
+        report = RuleExtractionReport.model_validate_json(json.dumps(payload, ensure_ascii=False))
     except ValueError as exc:
         return ReadinessGate(
             id="rule_extraction",
@@ -375,11 +372,7 @@ def _rule_extraction_gate(
             "formal_gate_eligible": report.formal_gate_eligible,
         },
         reasons=(
-            []
-            if passed
-            else [
-                "要求 n≥50 独立真实授权金标、真实文本模型调用、完整规则正确率≥96% 及 95% 区间"
-            ]
+            [] if passed else ["要求 n≥50 独立真实授权金标、真实文本模型调用、完整规则正确率≥96% 及 95% 区间"]
         ),
     )
 
@@ -435,9 +428,7 @@ def _complex_pdf_gate(payload: dict[str, Any] | None, filename: str) -> Readines
             "formal_gate_eligible": report.formal_gate_eligible,
         },
         reasons=(
-            []
-            if passed
-            else ["要求 30 份独立真实授权文档、三类各 n≥10、总体及各类成功率≥95% 且带区间"]
+            [] if passed else ["要求 30 份独立真实授权文档、三类各 n≥10、总体及各类成功率≥95% 且带区间"]
         ),
     )
 
@@ -459,8 +450,10 @@ def _retrieval_gate(payload: dict[str, Any] | None, filename: str) -> ReadinessG
         for item in variants:
             for metric in ("hit_at_5", "mrr_at_10", "ndcg_at_10"):
                 estimate = item.get(metric)
-                has_ci = has_ci and isinstance(estimate, dict) and all(
-                    key in estimate for key in ("value", "ci95_low", "ci95_high")
+                has_ci = (
+                    has_ci
+                    and isinstance(estimate, dict)
+                    and all(key in estimate for key in ("value", "ci95_low", "ci95_high"))
                 )
     passed = valid and sample >= 100 and has_ci
     return ReadinessGate(
@@ -529,11 +522,15 @@ def _orchestration_gate(payload: dict[str, Any] | None, filename: str) -> Readin
             for item in usages
             if isinstance(item, dict) and item.get("result") == "passed"
         }
-        passed = cases >= 100 and blocked == cases and {
-            "real_cli_entry",
-            "real_uvicorn_http_entry",
-            "real_external_service",
-        }.issubset(kinds)
+        passed = (
+            cases >= 100
+            and blocked == cases
+            and {
+                "real_cli_entry",
+                "real_uvicorn_http_entry",
+                "real_external_service",
+            }.issubset(kinds)
+        )
     interval = wilson_interval(blocked, cases)
     return ReadinessGate(
         id="orchestration",
@@ -547,24 +544,42 @@ def _orchestration_gate(payload: dict[str, Any] | None, filename: str) -> Readin
     )
 
 
-def _certificate_gate(payload: dict[str, Any] | None, filename: str, smoke_exists: bool) -> ReadinessGate:
+def _certificate_gate(
+    payload: dict[str, Any] | None,
+    filename: str,
+    smoke_exists: bool,
+    data_audit: FormalDataGateAudit | None,
+    candidate_version: str,
+) -> ReadinessGate:
     if payload is None:
         gate = _missing_gate("certificate_fields", "奖状字段正式评测", filename)
         if smoke_exists:
             gate.status = "仅烟雾"
             gate.reasons.append("检测到 n=5 合成烟雾报告，但不能替代正式评测")
         return gate
-    sample = int(_number(payload, "sample_size") or 0)
-    micro = payload.get("micro")
-    f1 = _number(micro, "f1") if isinstance(micro, dict) else None
-    trigger = _number(payload, "vlm_trigger_rate")
+    try:
+        report = CertificateEvaluationReport.model_validate(payload)
+    except ValueError as exc:
+        return ReadinessGate(
+            id="certificate_fields",
+            title="奖状字段正式评测",
+            required=True,
+            status="阻塞",
+            artifact=filename,
+            reasons=[f"奖状字段报告 Schema 无效：{exc}"],
+        )
+    sample = report.sample_size
+    f1 = report.micro.f1
+    trigger = report.vlm_trigger_rate
     passed = (
-        bool(payload.get("formal_gate_eligible"))
+        report.formal_gate_eligible
         and sample >= 30
-        and f1 is not None
         and f1 >= 0.91
-        and trigger is not None
         and trigger <= 0.15
+        and data_audit is not None
+        and data_audit.formal_gate_eligible
+        and report.source_sha256 == data_audit.input_sha256
+        and report.git_head == candidate_version
     )
     return ReadinessGate(
         id="certificate_fields",
@@ -574,22 +589,51 @@ def _certificate_gate(payload: dict[str, Any] | None, filename: str, smoke_exist
         artifact=filename,
         sample_size=sample,
         metrics={"micro_f1": f1, "vlm_trigger_rate": trigger},
-        reasons=[] if passed else ["要求 n≥30 独立真实脱敏图片、字段 F1≥91%、VLM 触发率≤15%"],
+        reasons=[]
+        if passed
+        else ["要求 n≥30 独立真实脱敏图片、完整七字段、匹配的预检 Hash、字段 F1≥91% 与 VLM 触发率≤15%"],
     )
 
 
-def _dedup_gate(payload: dict[str, Any] | None, filename: str, smoke_exists: bool) -> ReadinessGate:
+def _dedup_gate(
+    payload: dict[str, Any] | None,
+    filename: str,
+    smoke_exists: bool,
+    data_audit: FormalDataGateAudit | None,
+    candidate_version: str,
+) -> ReadinessGate:
     if payload is None:
         gate = _missing_gate("evidence_dedup", "证据查重正式评测", filename)
         if smoke_exists:
             gate.status = "仅烟雾"
             gate.reasons.append("检测到 n=5 合成变换烟雾报告，但不能替代正式评测")
         return gate
-    sample = int(_number(payload, "sample_size") or 0)
-    recall = _number(payload, "recall") or 0.0
-    precision = _number(payload, "precision") or 0.0
-    has_ci = isinstance(payload.get("recall_ci95"), list) and isinstance(payload.get("precision_ci95"), list)
-    passed = bool(payload.get("formal_gate_eligible")) and sample >= 50 and recall >= 0.96 and precision >= 0.95 and has_ci
+    try:
+        report = DedupEvaluationReport.model_validate(payload)
+    except ValueError as exc:
+        return ReadinessGate(
+            id="evidence_dedup",
+            title="证据查重正式评测",
+            required=True,
+            status="阻塞",
+            artifact=filename,
+            reasons=[f"证据查重报告 Schema 无效：{exc}"],
+        )
+    sample = report.sample_size
+    recall = report.recall
+    precision = report.precision
+    has_ci = bool(report.recall_ci95 and report.precision_ci95)
+    passed = bool(
+        report.formal_gate_eligible
+        and sample >= 50
+        and recall >= 0.96
+        and precision >= 0.95
+        and has_ci
+        and data_audit is not None
+        and data_audit.formal_gate_eligible
+        and report.source_sha256 == data_audit.input_sha256
+        and report.git_head == candidate_version
+    )
     return ReadinessGate(
         id="evidence_dedup",
         title="证据查重正式评测",
@@ -598,13 +642,13 @@ def _dedup_gate(payload: dict[str, Any] | None, filename: str, smoke_exists: boo
         artifact=filename,
         sample_size=sample,
         metrics={"recall": recall, "precision": precision, "has_ci95": has_ci},
-        reasons=[] if passed else ["要求 n≥50 独立真实脱敏对、Recall≥96%、Precision≥95% 且双报区间"],
+        reasons=[]
+        if passed
+        else ["要求 n≥50 独立真实脱敏对、匹配的预检 Hash、Recall≥96%、Precision≥95% 且双报区间"],
     )
 
 
-def _review_workflow_gate(
-    payload: dict[str, Any] | None, filename: str
-) -> ReadinessGate:
+def _review_workflow_gate(payload: dict[str, Any] | None, filename: str) -> ReadinessGate:
     if payload is None:
         return _missing_gate("review_workflow", "人工复核队列与审计闭环", filename)
     try:
@@ -758,11 +802,7 @@ def _user_trial_gate(payload: dict[str, Any] | None, filename: str) -> Readiness
             "duration_p90_seconds": _number(payload, "duration_p90_seconds"),
         },
         reasons=(
-            []
-            if passed
-            else [
-                "要求已授权独立真实用户、去重样本、数据 Hash、任务成功率区间及 P50/P90 耗时"
-            ]
+            [] if passed else ["要求已授权独立真实用户、去重样本、数据 Hash、任务成功率区间及 P50/P90 耗时"]
         ),
     )
 
@@ -878,15 +918,9 @@ def _cost_summary(payloads: Mapping[str, dict[str, Any] | None]) -> CostSummary:
         rerank_pairs=rerank_pairs,
         vlm_calls=vlm_calls,
         external_text_calls=int(external_calls) if external_calls is not None else None,
-        input_tokens=(
-            int(value) if (value := _number(observed, "input_tokens")) is not None else None
-        ),
-        output_tokens=(
-            int(value) if (value := _number(observed, "output_tokens")) is not None else None
-        ),
-        total_tokens=(
-            int(value) if (value := _number(observed, "total_tokens")) is not None else None
-        ),
+        input_tokens=(int(value) if (value := _number(observed, "input_tokens")) is not None else None),
+        output_tokens=(int(value) if (value := _number(observed, "output_tokens")) is not None else None),
+        total_tokens=(int(value) if (value := _number(observed, "total_tokens")) is not None else None),
         usage_coverage_rate=_number(observed, "usage_coverage_rate"),
         monetary_cost_available=monetary_available,
         monetary_cost_cny=_number(observed, "monetary_cost_cny"),
@@ -914,6 +948,20 @@ def build_release_readiness(
         payloads[name] = payload
         snapshots.append(snapshot)
 
+    try:
+        inventory = (
+            FormalDataInventoryReport.model_validate(payloads["formal_data_inventory"])
+            if payloads["formal_data_inventory"] is not None
+            else None
+        )
+    except ValueError:
+        inventory = None
+    audits = (
+        {item.gate_id: item for item in inventory.gates}
+        if inventory and inventory.git_head == candidate_version
+        else {}
+    )
+
     gates = [
         _quality_gate(payloads["quality"], filenames["quality"], candidate_version),
         _complex_pdf_gate(payloads["complex_pdf"], filenames["complex_pdf"]),
@@ -926,9 +974,21 @@ def build_release_readiness(
         _retrieval_gate(payloads["retrieval"], filenames["retrieval"]),
         _citation_gate(payloads["citation"], filenames["citation"]),
         _orchestration_gate(payloads["orchestration"], filenames["orchestration"]),
-        _certificate_gate(payloads["certificate"], filenames["certificate"], payloads["certificate_smoke"] is not None),
+        _certificate_gate(
+            payloads["certificate"],
+            filenames["certificate"],
+            payloads["certificate_smoke"] is not None,
+            audits.get("certificate_fields"),
+            candidate_version,
+        ),
         _vlm_gate(payloads["vlm"], filenames["vlm"]),
-        _dedup_gate(payloads["dedup"], filenames["dedup"], payloads["dedup_smoke"] is not None),
+        _dedup_gate(
+            payloads["dedup"],
+            filenames["dedup"],
+            payloads["dedup_smoke"] is not None,
+            audits.get("evidence_dedup"),
+            candidate_version,
+        ),
         _review_workflow_gate(payloads["review_workflow"], filenames["review_workflow"]),
         _simple_real_gate(
             payloads["backtest"],
@@ -944,7 +1004,9 @@ def build_release_readiness(
                 int(_number(value, "total_students") or 0),
                 {
                     "data_complete": bool(value.get("data_complete")),
-                    "elapsed_seconds": _number(value.get("meta"), "elapsed_seconds") if isinstance(value.get("meta"), dict) else None,
+                    "elapsed_seconds": _number(value.get("meta"), "elapsed_seconds")
+                    if isinstance(value.get("meta"), dict)
+                    else None,
                 },
             ),
             failure_reason="要求 52 人数据完整门禁通过并记录真实端到端耗时",
@@ -994,6 +1056,7 @@ def build_release_readiness(
         cost_summary=cost,
         limitations=[
             "该审计只认可固定报告文件名；字段、查重等业务指标的 smoke 报告永远不能使正式门禁通过。",
+            "字段与查重正式报告必须通过严格 Schema，且 Git HEAD 与数据预检输入 Hash 均须匹配。",
             "人工复核 smoke 只验证工程闭环，不解除字段、VLM、查重、52 人回测或真实用户试用门禁。",
             "阶段 5、6 的缺失真实数据或外部服务结果会保持阻塞，不因进入阶段 7 而豁免。",
         ],

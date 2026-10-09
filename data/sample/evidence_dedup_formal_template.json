@@ -1,0 +1,45 @@
+{
+  "dataset_version": "REPLACE",
+  "authorization_reference": null,
+  "independent_real_pairs": false,
+  "pairs": [
+    {
+      "id": "REPLACE-PAIR-001",
+      "duplicate": true,
+      "transformation": "exact",
+      "hard_negative": null,
+      "real_source": false,
+      "redacted": false,
+      "left": {
+        "id": "REPLACE-LEFT-001",
+        "type": "image",
+        "path": "images/REPLACE-LEFT-001.png",
+        "fields": {
+          "姓名": "匿名代号",
+          "赛事名称": "赛事名称",
+          "级别": "省级",
+          "奖项/名次": "二等奖",
+          "获奖日期": "2025-10-01",
+          "颁发单位": "颁发单位",
+          "团队属性": "个人"
+        },
+        "phash": null
+      },
+      "right": {
+        "id": "REPLACE-RIGHT-001",
+        "type": "image",
+        "path": "images/REPLACE-RIGHT-001.png",
+        "fields": {
+          "姓名": "匿名代号",
+          "赛事名称": "赛事名称",
+          "级别": "省级",
+          "奖项/名次": "二等奖",
+          "获奖日期": "2025-10-01",
+          "颁发单位": "颁发单位",
+          "团队属性": "个人"
+        },
+        "phash": null
+      }
+    }
+  ]
+}
